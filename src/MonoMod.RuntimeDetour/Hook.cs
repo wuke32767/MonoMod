@@ -1,4 +1,5 @@
 ﻿using Mono.Cecil.Cil;
+using MonoMod.Cil;
 using MonoMod.Core;
 using MonoMod.Core.Platforms;
 using MonoMod.Logs;
@@ -8,9 +9,73 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using _Conv = MonoMod.RuntimeDetour.FunctionPointerConvertor<System.Delegate, System.Delegate, object>;
 
 namespace MonoMod.RuntimeDetour
 {
+    sealed class UnwrappedDelegate
+    {
+        public nint MethodPointer;
+        // only used for Intermediate<>.
+        // not designed for struct.
+        public object? Target;
+    }
+    internal sealed class FunctionPointerConvertor<TTarget, TIn, TSlot>
+        where TTarget : Delegate where TIn : Delegate
+    {
+        public TTarget? LastDelegate;
+        public TIn? LastInDelegate;
+        public MethodBase? Invoker;
+        public TSlot? Slot;
+
+        public TTarget ProcessDelegate(TIn src)
+        {
+            if (LastInDelegate == src)
+            {
+                return LastDelegate!;
+            }
+            LastInDelegate = src;
+            var uw = new UnwrappedDelegate()
+            {
+                MethodPointer = PlatformTriple.Current.Runtime.GetMethodEntryPoint(src.Method),
+                Target = src.Target,
+            };
+            return LastDelegate = Invoker!.CreateDelegate<TTarget>(uw);
+        }
+    }
+    internal sealed class CompatibleConverter<TTarget, TIn, TSlot>
+        where TTarget : Delegate where TIn : Delegate
+    {
+        public TTarget? LastDelegate;
+        public TIn? LastInDelegate;
+        public TSlot? Slot;
+        //public static ConditionalWeakTable<MethodInfo, MethodInfo>? CastCache;
+        public TTarget CastDelegate(TIn src)
+        {
+            try
+            {
+                return LastDelegate = src.CastDelegate<TTarget>();
+            }
+            catch
+            {
+                // TODO: can this really happen?
+                throw;
+                MMDbgLog.Warning($"Finally, it triggered.\nFailed when casting delegate. Falling back to Unsafe.As.\n{src.Method}");
+                return LastDelegate = Unsafe.As<TTarget>(src);
+            }
+
+        }
+        public TTarget ProcessDelegate(TIn src)
+        {
+            if (LastInDelegate == src)
+            {
+                return LastDelegate!;
+            }
+            LastInDelegate = src;
+            return CastDelegate(src);
+        }
+    }
+
     /// <summary>
     /// A single method hook from a source to a target, optionally allowing the target to call the original method.
     /// </summary>
@@ -465,12 +530,57 @@ namespace MonoMod.RuntimeDetour
         public MethodInfo Target { get; }
         MethodInfo IDetour.PublicTarget => Target;
 
-        private readonly MethodInfo realTarget;
-        MethodInfo IDetour.InvokeTarget => realTarget;
+        private readonly Delegate realTarget;
+        MethodInfo IDetour.InvokeTarget => Target;
 
+        Delegate IDetour.InvokDelegate => realTarget;
 
+        LegacyTrampolineData? LegacyTrampoline;
+        IDetourTrampoline IDetour.NextTrampoline => LegacyTrampoline!;
         [SuppressMessage("Reliability", "CA2002:Do not lock on objects with weak identity",
             Justification = "This type is never available externally, and will never be locked on externally.")]
+        private sealed class LegacyTrampolineData : IDetourTrampoline, IDisposable
+        {
+            private readonly MethodInfo trampoline;
+            public object? slot;
+            public Delegate? Target;
+            DataScope<DynamicReferenceCell> refs;
+            public static FieldInfo getSlot = typeof(LegacyTrampolineData).GetField(nameof(slot))!;
+            public static FieldInfo getTarget = typeof(LegacyTrampolineData).GetField(nameof(Target))!;
+            public MethodBase TrampolineMethod => trampoline;
+
+            public LegacyTrampolineData(MethodSignature sig, Type invoke)
+            {
+                var dmd = sig.CreateDmd($"LegacyTrampoline<{sig}>");
+                var il = dmd.GetILProcessor();
+                refs = il.EmitNewReference(this, out _);
+                il.Emit(OpCodes.Ldfld, getTarget);
+                foreach (var i in dmd.Definition.Parameters)
+                {
+                    il.Emit(OpCodes.Ldarg, i);
+                }
+                il.Emit(OpCodes.Call, invoke.GetMethod("Invoke")!);
+                il.Emit(OpCodes.Ret);
+                trampoline = dmd.Generate();
+            }
+
+            public void Dispose()
+            {
+                lock (this)
+                {
+                    refs.Dispose();
+                }
+            }
+
+            public void StealTrampolineOwnership()
+            {
+            }
+
+            public void ReturnTrampolineOwnership()
+            {
+            }
+
+        }
         private sealed class TrampolineData : IDetourTrampoline, IDisposable
         {
 
@@ -530,13 +640,8 @@ namespace MonoMod.RuntimeDetour
 
         }
 
-        private readonly TrampolineData trampoline;
-        IDetourTrampoline IDetour.NextTrampoline => trampoline;
-
         private readonly DetourManager.ManagedDetourState state;
         private readonly DetourManager.SingleManagedDetourState detour;
-
-        private readonly DataScope<DynamicReferenceCell> delegateObjectScope;
 
         /// <summary>
         /// Constructs a <see cref="Hook"/> using the specified source and target methods, specified target object, specified <see cref="IDetourFactory"/> and <see cref="DetourConfig"/>,
@@ -548,22 +653,23 @@ namespace MonoMod.RuntimeDetour
         /// <param name="factory">The <see cref="IDetourFactory"/> to use when manipulating this <see cref="Hook"/>.</param>
         /// <param name="config">The <see cref="DetourConfig"/> to use for this <see cref="Hook"/>.</param>
         /// <param name="applyByDefault">Whether or not this hook should be applied when the constructor finishes.</param>
-        public Hook(MethodBase source, MethodInfo target, object? targetObject, IDetourFactory factory, DetourConfig? config, bool applyByDefault)
+        public Hook(MethodBase source, MethodInfo target, object? targetObject, IDetourFactory? factory, DetourConfig? config, bool applyByDefault)
         {
             Helpers.ThrowIfArgumentNull(source);
             Helpers.ThrowIfArgumentNull(target);
             Helpers.ThrowIfArgumentNull(factory);
 
+            state = DetourManager.GetDetourState(source);
+
             this.factory = factory;
             Config = config;
             Source = PlatformTriple.Current.GetIdentifiable(source);
-            Target = target;
 
-            realTarget = PrepareRealTarget(targetObject, out trampoline, out delegateObjectScope);
+            Target = target;
+            realTarget = PrepareRealTarget(targetObject, config?.CelesteLegacyDetour ?? false);
 
             MMDbgLog.Trace($"Creating Hook from {Source} to {Target}");
 
-            state = DetourManager.GetDetourState(source);
             detour = new(this);
 
             if (applyByDefault)
@@ -572,26 +678,14 @@ namespace MonoMod.RuntimeDetour
             }
         }
 
-        private sealed class HookData
-        {
-            public readonly object? Target;
-            public readonly Delegate? InvokeNext;
-            public HookData(object? target, Delegate? invokeNext)
-            {
-                Target = target;
-                InvokeNext = invokeNext;
-            }
-        }
-
-        private static readonly FieldInfo HookData_Target = typeof(HookData).GetField(nameof(HookData.Target))!;
-        private static readonly FieldInfo HookData_InvokeNext = typeof(HookData).GetField(nameof(HookData.InvokeNext))!;
-
-        private MethodInfo PrepareRealTarget(object? target, out TrampolineData trampoline, out DataScope<DynamicReferenceCell> scope)
+        private Delegate PrepareRealTarget(object? target, bool trampoline = false)
         {
             CheckSupported();
 
+            var builder = state.Builder;
             var srcSig = MethodSignature.ForMethod(Source);
             var dstSig = MethodSignature.ForMethod(Target, ignoreThis: true); // the dest sig we don't want to consider its this param
+            var hookSig = MethodSignature.ForMethod(builder.Hook.GetMethod("Invoke")!, ignoreThis: true);
 
             if (target is null && !Target.IsStatic)
             {
@@ -617,90 +711,133 @@ namespace MonoMod.RuntimeDetour
                 throw new ArgumentException("Target method is not compatible with source method");
             }
 
-            var trampSig = srcSig;
-
-            var delegateInvoke = nextDelegateType?.GetMethod("Invoke");
-            if (delegateInvoke is not null)
+            if (nextDelegateType is null)
             {
-                // we want to check that the delegate invoke is also compatible with the source sig
-                var invokeSig = MethodSignature.ForMethod(delegateInvoke, ignoreThis: true);
-                // if it takes a delegate parameter, the trampoline signature should match that delegate
-                trampSig = invokeSig;
+                using var dmd = hookSig.CreateDmd(DebugFormatter.Format($"Hook<{Target.GetID()}>"));
+                using ILContext il = new(dmd.Definition);
+                var ic = dmd.GetILProcessor();
+                var i = 1;
+
+                if (target is not null)
+                {
+                    dmd.Definition.Parameters.Insert(0, new(il.Import(target.GetType())));
+                    ic.Emit(OpCodes.Ldarg_0);
+                    i++;
+                }
+
+                if (trampoline)
+                {
+                    LegacyTrampoline?.Dispose();
+                    LegacyTrampoline = new(dstSig, builder.Orig);
+                    if (target is not null)
+                    {
+                        ic.Emit(OpCodes.Ldfld, LegacyTrampolineData.getSlot);
+                        LegacyTrampoline.slot = target;
+                        dmd.Definition.Parameters[0] = new(il.Import(typeof(LegacyTrampolineData)));
+                    }
+                    else
+                    {
+                        dmd.Definition.Parameters.Insert(0, new(il.Import(typeof(LegacyTrampolineData))));
+                        i++;
+                    }
+                    target = LegacyTrampoline;
+                    ic.Emit(OpCodes.Ldarg_0);
+                    ic.Emit(OpCodes.Ldarg_1);
+                    ic.Emit(OpCodes.Stfld, LegacyTrampolineData.getTarget);
+                }
+
+                for (; i < dmd.Definition.Parameters.Count; i++)
+                {
+                    ic.Emit(OpCodes.Ldarg, i);
+                }
+
+                ic.Emit(OpCodes.Call, Target);
+                ic.Emit(OpCodes.Ret);
+                return dmd.Generate().CreateDelegate(builder.Hook, target);
             }
 
-            if (!trampSig.IsCompatibleWith(srcSig))
+            // we want to check that the delegate invoke is also compatible with the source sig
+            var invokeSig = MethodSignature.ForMethod(nextDelegateType.GetMethod("Invoke")!, ignoreThis: true);
+            // if it takes a delegate parameter, the trampoline signature should match that delegate
+
+            if (!invokeSig.IsCompatibleWith(srcSig))
             {
                 throw new ArgumentException("Target method's delegate parameter is not compatible with the source method");
             }
 
-            trampoline = new TrampolineData(trampSig);
-            // note: even in the below case, where it'll never be used, we still need to *get* a trampoline because the DetourManager
-            //     expects to have one available to it
-
-            if (target is null && nextDelegateType is null)
+            if (nextDelegateType == builder.Orig)
             {
-                // if both the target and the next delegate type are null, then no proxy method is needed,
-                // and the target method can be used as-is
-                scope = default;
-                return Target;
+                MMDbgLog.Warning("[ColdPatch.Hook] Generated type was referenced. Is it intended?");
+                try
+                {
+                    return Delegate.CreateDelegate(builder.Hook, target, Target);
+                }
+                catch { }
             }
 
-            var hookData = new HookData(target,
-                nextDelegateType is not null
-                ? trampoline.TrampolineMethod.CreateDelegate(nextDelegateType)
-                : null);
-
-            using (var dmd = srcSig.CreateDmd(DebugFormatter.Format($"Hook<{Target.GetID()}>")))
             {
-                var il = dmd.GetILProcessor();
-                var module = dmd.Module!;
-                var method = dmd.Definition!;
+                var needPointer = !srcSig.IsDelegateCompatibleWith(invokeSig);
+                var _type = needPointer ? typeof(FunctionPointerConvertor<,,>) : typeof(CompatibleConverter<,,>);
+                var covtype = _type.MakeGenericType(nextDelegateType, builder.Orig, target?.GetType() ?? typeof(object));
 
-                var dataLoc = new VariableDefinition(module.ImportReference(typeof(HookData)));
-                il.Body.Variables.Add(dataLoc);
+                var wrap = Activator.CreateInstance(covtype);
 
-                scope = il.EmitNewTypedReference(hookData, out _);
-                il.Emit(OpCodes.Stloc, dataLoc);
-
-                // first load the target object, if needed
-                if (!Target.IsStatic)
+                if (needPointer)
                 {
-                    il.Emit(OpCodes.Ldloc, dataLoc);
-                    il.Emit(OpCodes.Ldfld, module.ImportReference(HookData_Target));
+                    var pointer = covtype.GetField(nameof(_Conv.Invoker))!;
+                    using var inv = invokeSig.CreateDmd(DebugFormatter.Format($"Calli<{Target.GetID()}>"));
+                    var call = new Mono.Cecil.CallSite(inv.Definition.ReturnType);
+                    call.Parameters.Add(new(inv.Module.TypeSystem.Object));
+                    call.Parameters.AddRange(inv.Definition.Parameters);
 
-                    var declType = Target.DeclaringType;
-                    if (declType is not null)
+                    var box = typeof(UnwrappedDelegate);
+                    inv.Definition.Parameters.Insert(0, new(inv.Module.ImportReference(box)));
+
+                    var ili = inv.GetILProcessor();
+                    ili.Emit(OpCodes.Ldarg_0);
+                    ili.Emit(OpCodes.Ldfld, box.GetField(nameof(UnwrappedDelegate.Target))!);
+                    for (var i = 1; i < inv.Definition.Parameters.Count; i++)
                     {
-                        if (declType.IsValueType)
-                        {
-                            il.Emit(OpCodes.Unbox, module.ImportReference(declType));
-                        }
-                        else
-                        {
-                            // the cast should be redundant
-                            //il.Emit(OpCodes.Castclass, module.ImportReference(declType));
-                        }
+                        ili.Emit(OpCodes.Ldarg, i);
                     }
+                    ili.Emit(OpCodes.Ldarg_0);
+                    ili.Emit(OpCodes.Ldfld, box.GetField(nameof(UnwrappedDelegate.MethodPointer))!);
+                    ili.Emit(OpCodes.Tail);
+                    ili.Emit(OpCodes.Calli, call);
+                    ili.Emit(OpCodes.Ret);
+                    // TODO: wait for fix
+                    Switches.TryGetSwitchValue(Switches.DMDType, out var old);
+                    Switches.SetSwitchValue(Switches.DMDType, "cecil");
+                    pointer.SetValue(wrap, inv.Generate());
+                    Switches.SetSwitchValue(Switches.DMDType, old);
                 }
 
-                // then load the delegate, if needed
-                if (nextDelegateType is not null)
+                using var dmd = hookSig.CreateDmd(DebugFormatter.Format($"Hook<{Target.GetID()}>"));
+                var il = (dmd.Module);
+                var ic = dmd.GetILProcessor();
+                dmd.Definition.Parameters.Insert(0, new(il.ImportReference(covtype)));
+
+                if (target is not null)
                 {
-                    il.Emit(OpCodes.Ldloc, dataLoc);
-                    il.Emit(OpCodes.Ldfld, module.ImportReference(HookData_InvokeNext));
+                    var slot = covtype.GetField(nameof(_Conv.Slot))!;
+                    slot.SetValue(wrap, target);
+                    ic.Emit(OpCodes.Ldarg_0);
+                    ic.Emit(OpCodes.Ldfld, slot);
                 }
 
-                // then load all of our arguments
-                foreach (var p in method.Parameters)
+                ic.Emit(OpCodes.Ldarg_0);
+                ic.Emit(OpCodes.Ldarg_1);
+                ic.Emit(OpCodes.Callvirt, covtype.GetMethod(nameof(_Conv.ProcessDelegate))!);
+
+                for (var i = 2; i < dmd.Definition.Parameters.Count; i++)
                 {
-                    il.Emit(OpCodes.Ldarg, p.Index);
+                    ic.Emit(OpCodes.Ldarg, i);
                 }
-
-                // then call our target method
-                il.Emit(OpCodes.Call, Target);
-                il.Emit(OpCodes.Ret);
-
-                return dmd.Generate();
+                ic.Emit(OpCodes.Call, Target);
+                ic.Emit(OpCodes.Ret);
+                var ret = dmd.Generate();
+                var test1 = MethodSignature.ForMethod(ret);
+                return ret.CreateDelegate(builder.Hook, wrap);
             }
         }
 
@@ -708,6 +845,10 @@ namespace MonoMod.RuntimeDetour
         {
             if (Source.IsGenericMethod || Source.DeclaringType is { IsGenericType: true })
                 throw new ArgumentException("Source method is generic, generic hooks are not supported");
+            if (Source.GetMethodBody()?.GetILAsByteArray() is null)
+            {
+                throw new NotSupportedException("Source does not have il body");
+            }
         }
 
         private void CheckDisposed()
@@ -783,15 +924,10 @@ namespace MonoMod.RuntimeDetour
                 detour.IsValid = false;
                 if (!(AppDomain.CurrentDomain.IsFinalizingForUnload() || Environment.HasShutdownStarted))
                     Undo();
-                delegateObjectScope.Dispose();
-
-                if (disposing)
-                {
-                    trampoline.Dispose();
-                }
 
                 disposedValue = true;
             }
+            LegacyTrampoline?.Dispose();
         }
 
         /// <summary>

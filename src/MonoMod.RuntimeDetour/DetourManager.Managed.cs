@@ -1,4 +1,5 @@
-﻿using Mono.Cecil;
+﻿#pragma warning disable CS0618
+using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using MonoMod.Core;
@@ -8,6 +9,8 @@ using MonoMod.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 
@@ -16,17 +19,48 @@ namespace MonoMod.RuntimeDetour
     public static partial class DetourManager
     {
         #region Detour chain
+        internal sealed class EndOfChainInfo
+        {
+            public Delegate? Invoke;
+            public static FieldInfo invoke = typeof(EndOfChainInfo).GetField(nameof(Invoke))!;
+        }
+
+        internal sealed class EntryInfo
+        {
+            public Delegate? NextEntry;
+            public Delegate? Hooker;
+            public static FieldInfo entry = typeof(EntryInfo).GetField(nameof(NextEntry))!;
+            public static FieldInfo hooker = typeof(EntryInfo).GetField(nameof(Hooker))!;
+            public static MethodInfo throws = ((Delegate)ThrowIfNull).Method;
+            public static object ThrowIfNull(object check)
+            {
+                if (check is null)
+                {
+                    throw new InvalidOperationException("Detour has been removed");
+                }
+                return check;
+            }
+            /// <summary>
+            /// preview of <see cref="SignatureBuilder.BuildEntry(EntryInfo)"/>
+            /// </summary>
+            object Invoke(params object[] param)
+            {
+                return ((Delegate)ThrowIfNull(Hooker!)).DynamicInvoke(NextEntry, param)!;
+            }
+        }
         internal abstract class ManagedChainNode
         {
 
+            //public ManagedChainNode? Prev;
             public ManagedChainNode? Next;
+            public EntryInfo? Info;
 
             public abstract MethodBase Entry { get; }
-            public abstract MethodBase NextTrampoline { get; }
+            public abstract MethodBase? NextTrampoline { get; }
             public abstract DetourConfig? Config { get; }
             public virtual bool DetourToFallback => true;
+            public abstract Delegate InvokeEntry { get; }
 
-            private MethodBase? lastTarget;
             private ICoreDetour? trampolineDetour;
             private bool hasStolenTrampoline;
 
@@ -43,29 +77,33 @@ namespace MonoMod.RuntimeDetour
                 }
             }
 
-            public virtual void UpdateDetour(IDetourFactory factory, MethodBase fallback)
+            public virtual void UpdateDetour(IDetourFactory factory, Delegate fallback, SignatureBuilder builder)
             {
-                var to = Next?.Entry;
-                if (to is null && DetourToFallback)
+                Helpers.Assert(!hasStolenTrampoline);
+                Helpers.Assert(Info is not null);
+
+                if (Next?.Info is null && DetourToFallback)
                 {
-                    to = fallback;
+                    Info.Hooker = fallback;
+                    Info.NextEntry = null;
+                }
+                else
+                {
+                    Helpers.Assert(Next is not null, "Unreachable: TODO: Generate a empty method");
+                    Info.Hooker = Next!.InvokeEntry;
+                    Info.NextEntry = builder.BuildEntry(Next.Info!);
                 }
 
-                if (to == lastTarget)
-                {
-                    // our target hasn't changed, don't need to update this link
-                    return;
-                }
-
-                UndoTrampolineDetour();
-
-                if (to is not null)
-                {
-                    trampolineDetour = factory.CreateDetour(NextTrampoline, to, applyByDefault: true);
-                }
-
-                lastTarget = to;
                 IsApplied = true;
+            }
+            public virtual void UpdateEntry(SignatureBuilder info)
+            {
+                if (Info is not null)
+                {
+                    Info.Hooker = null;
+                    Info.NextEntry = null;
+                }
+                Info = new();
             }
 
             public void Remove()
@@ -74,31 +112,18 @@ namespace MonoMod.RuntimeDetour
                 {
                     UndoTrampolineDetour();
                 }
-                lastTarget = null;
+                //Prev = null;
                 Next = null;
                 IsApplied = false;
             }
 
             public void StealTrampoline(IDetourFactory factory)
             {
-                Helpers.Assert(!hasStolenTrampoline);
-
-                StealTrampolineInner();
-                hasStolenTrampoline = true;
-
-                UndoTrampolineDetour();
-                trampolineDetour = factory.CreateDetour(NextTrampoline, GetRemovedStub(MethodSignature.ForMethod(NextTrampoline)), applyByDefault: true);
             }
             protected virtual void StealTrampolineInner() => throw new NotSupportedException("Can't steal ManagedChainNode trampoline");
 
             public virtual void ReturnStolenTrampoline()
             {
-                Helpers.Assert(hasStolenTrampoline);
-
-                UndoTrampolineDetour();
-
-                ReturnStolenTrampolineInner();
-                hasStolenTrampoline = false;
             }
             protected virtual void ReturnStolenTrampolineInner() => throw new NotSupportedException("Can't steal ManagedChainNode trampoline");
 
@@ -117,6 +142,7 @@ namespace MonoMod.RuntimeDetour
             public override MethodBase NextTrampoline => Detour.NextTrampoline.TrampolineMethod;
             public override DetourConfig? Config => Detour.Config;
             public IDetourFactory Factory => Detour.Factory;
+            public override Delegate InvokeEntry => Detour.InvokeDelegate;
 
             protected override void StealTrampolineInner() => Detour.NextTrampoline.StealTrampolineOwnership();
             protected override void ReturnStolenTrampolineInner() => Detour.NextTrampoline.ReturnTrampolineOwnership();
@@ -124,32 +150,16 @@ namespace MonoMod.RuntimeDetour
 
         internal sealed class ManagedDetourSyncInfo : DetourSyncInfo
         {
-            public int HasStolenTrampolines;
-            public readonly ConcurrentQueue<ManagedChainNode> TrampolineStealers = new();
+            public Delegate? Entry;
+            //public int HasStolenTrampolines;
+            //public readonly ConcurrentQueue<ManagedChainNode> TrampolineStealers = new();
 
             public void StealTrampoline(IDetourFactory factory, ManagedChainNode node)
             {
-                node.StealTrampoline(factory);
-
-                // We don't have a race condition with ReturnStolenTrampolines here because:
-                // 1. there is at least one active call by this thread whenever we steal a trampoline
-                // 2. we wait for all other threads to have returned from the method before stealing the trampoline
-                // -> these threads can't end up in ReturnStolenTrampolines because of 1.
-                TrampolineStealers.Enqueue(node);
-                Volatile.Write(ref HasStolenTrampolines, 1);
             }
 
             public void ReturnStolenTrampolines()
             {
-                if (Interlocked.CompareExchange(ref HasStolenTrampolines, 0, 1) != 1)
-                {
-                    return;
-                }
-
-                while (TrampolineStealers.TryDequeue(out var node))
-                {
-                    node.ReturnStolenTrampoline();
-                }
             }
 
         }
@@ -161,33 +171,45 @@ namespace MonoMod.RuntimeDetour
         internal sealed class RootManagedChainNode : ManagedChainNode
         {
             public override MethodBase Entry { get; }
-            public override MethodBase NextTrampoline { get; }
+            public override MethodBase? NextTrampoline { get; }
             public override DetourConfig? Config => null;
             public override bool DetourToFallback => true; // we do want to detour to fallback, because our sync proxy might be waiting to call the method
+            public override Delegate InvokeEntry => null!;
 
-            public readonly MethodSignature Sig;
+            public Delegate SyncProxyFunc { get; private set; } = null!;
+            public readonly SignatureBuilder Builder;
+            public MethodSignature Sig => Builder.Sig;
             public readonly ManagedDetourSyncInfo SyncInfo = new();
             public readonly ConcurrentQueue<Action> StolenTrampolineReturners = new();
             private readonly DataScope<DynamicReferenceCell> syncProxyRefScope;
 
             public bool HasILHook;
 
-            public RootManagedChainNode(MethodBase method)
+            static FieldInfo? detourList = typeof(ManagedDetourState).GetField("detourList", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            static FieldInfo? _syncInfo = typeof(RootManagedChainNode).GetField("_syncInfo", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            static FieldInfo? _syncDelegate = typeof(ManagedDetourSyncInfo).GetField("Entry", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+            public RootManagedChainNode(MethodBase method, SignatureBuilder ext)
             {
-                Sig = MethodSignature.ForMethod(method);
+                Builder = ext;
                 Entry = method;
-                NextTrampoline = TrampolinePool.Rent(Sig);
+                Info = new();
+                //NextTrampoline = TrampolinePool.Rent(Sig);
+
+                var orig = ext.Orig;
 
                 DataScope<DynamicReferenceCell> refScope = default;
                 SyncInfo.SyncProxy = GenerateSyncProxy(DebugFormatter.Format($"{Entry}"), Sig,
                     (method, il) => refScope = il.EmitNewTypedReference(SyncInfo, out _),
                     (method, il, loadSyncInfo) =>
                     {
+                        loadSyncInfo();
+                        il.Emit(OpCodes.Ldfld, _syncDelegate!);
+                        il.Emit(OpCodes.Castclass, orig);
                         foreach (var p in method.Parameters)
                         {
                             il.Emit(OpCodes.Ldarg, p);
                         }
-                        il.Emit(OpCodes.Call, method.Module.ImportReference(NextTrampoline));
+                        il.Emit(OpCodes.Call, method.Module.ImportReference(orig.GetMethod("Invoke")));
                     },
                     (method, il, loadSyncInfo) =>
                     {
@@ -201,9 +223,12 @@ namespace MonoMod.RuntimeDetour
 
             private ICoreDetour? syncDetour;
 
-            public override void UpdateDetour(IDetourFactory factory, MethodBase fallback)
+            public override void UpdateDetour(IDetourFactory factory, Delegate fallback, SignatureBuilder PatchInfo)
             {
-                base.UpdateDetour(factory, fallback);
+                base.UpdateDetour(factory, fallback, PatchInfo);
+
+                Helpers.Assert(Info is not null);
+                SyncInfo.Entry = PatchInfo.BuildEntry(Info);
 
                 Helpers.Assert(syncDetour is not null);
 
@@ -283,17 +308,88 @@ namespace MonoMod.RuntimeDetour
         }
         #endregion
 
+        internal sealed class SignatureBuilder
+        {
+            internal static readonly ConcurrentDictionary<MethodSignature, SignatureBuilder> builders = new();
+            public MethodSignature Sig;
+            public Type Orig;
+            public Type Hook;
+            public MethodInfo Built;
+            public MethodInfo BuiltEoc;
+            public static SignatureBuilder For(MethodSignature sig) => builders.GetOrAdd(sig, _ => new(sig));
+            public SignatureBuilder(MethodSignature sig)
+            {
+                Sig = sig;
+                (Orig, Hook) = FastDelegateInvokers.GetDelegateType(Sig);
+                var dmd = Sig.CreateDmd($"Intermediate<{Sig}>");
+                var mod = dmd.Module;
+                dmd.Definition.Parameters.Insert(0, new(mod.ImportReference(typeof(EntryInfo))));
+                var il = dmd.GetILProcessor();
+
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, EntryInfo.hooker);
+                il.Emit(OpCodes.Call, EntryInfo.throws);
+
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, EntryInfo.entry);
+
+                foreach (var i in dmd.Definition.Parameters.Skip(1))
+                {
+                    il.Emit(OpCodes.Ldarg, i);
+                }
+
+                il.Emit(OpCodes.Callvirt, Hook.GetMethod("Invoke")!);
+
+                il.Emit(OpCodes.Ret);
+                Built = dmd.Generate();
+
+                dmd.Definition.Name = $"EOC<{Sig}>";
+                dmd.Definition.Parameters[0].ParameterType = mod.ImportReference(typeof(EndOfChainInfo));
+                dmd.Definition.Parameters.Insert(1, new(mod.ImportReference(Orig)));
+                dmd.Definition.Body.Instructions.Clear();
+                il = dmd.GetILProcessor();
+
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, EndOfChainInfo.invoke);
+                il.Emit(OpCodes.Call, EntryInfo.throws);
+
+                foreach (var i in dmd.Definition.Parameters.Skip(2))
+                {
+                    il.Emit(OpCodes.Ldarg, i);
+                }
+
+                il.Emit(OpCodes.Callvirt, Orig.GetMethod("Invoke")!);
+                il.Emit(OpCodes.Ret);
+                BuiltEoc = dmd.Generate();
+            }
+
+            /// <summary>
+            /// efficient version of <see cref="EntryInfo.Invoke(object[])"/>
+            /// </summary>
+            public Delegate BuildEntry(EntryInfo info)
+            {
+                return Built.CreateDelegate(Orig, info);
+            }
+            public Delegate MakeEoc(EndOfChainInfo info)
+            {
+                return BuiltEoc.CreateDelegate(Hook, info);
+            }
+        }
         internal sealed class ManagedDetourState
         {
             public readonly MethodBase Source;
             public MethodInfo? SourceClone;
             public DynamicMethodDefinition? SourceCloneIl;
+            public readonly SignatureBuilder Builder;
             public MethodInfo? EndOfChain;
+            public EndOfChainInfo EndOfChainDelegate = new();
 
             public ManagedDetourState(MethodBase src)
             {
+                var sig = MethodSignature.ForMethod(src, false);
                 Source = src;
-                detourList = new(src);
+                Builder = SignatureBuilder.For(sig);
+                detourList = new(src, Builder);
             }
 
             private MethodDetourInfo? info;
@@ -318,6 +414,7 @@ namespace MonoMod.RuntimeDetour
                         throw new InvalidOperationException("Trying to add a detour which was already added");
 
                     cnode = new ManagedDetourChainNode(detour);
+                    cnode.UpdateEntry(Builder);
                     detourChainVersion++;
                     if (cnode.Config is { } cfg)
                     {
@@ -389,6 +486,7 @@ namespace MonoMod.RuntimeDetour
 
             private void RemoveGraphDetour(SingleManagedDetourState detour, DepGraphNode<ManagedChainNode> node)
             {
+                node.ListNode.ChainNode.UpdateEntry(Builder);
                 detourGraph.Remove(node);
                 PrepareEndOfChain(detour.Factory);
                 UpdateChain(detour.Factory, out var stealTrampoline);
@@ -401,16 +499,23 @@ namespace MonoMod.RuntimeDetour
 
             private void RemoveNoConfigDetour(SingleManagedDetourState detour, ManagedDetourChainNode node)
             {
+                node.UpdateEntry(Builder);
                 ref var chain = ref noConfigChain;
+                ManagedChainNode? prev = null;
                 while (chain is not null)
                 {
                     if (ReferenceEquals(chain, node))
                     {
                         chain = node.Next;
+                        if (node.Next is { })
+                        {
+                            //node.Next.Prev = prev;
+                        }
                         node.Next = null;
                         break;
                     }
 
+                    prev = chain;
                     chain = ref chain.Next;
                 }
 
@@ -551,20 +656,29 @@ namespace MonoMod.RuntimeDetour
             private void PrepareEndOfChain(IDetourFactory factory)
             {
                 detourList.PrepareDetour(factory, out SourceClone, out SourceCloneIl);
-                EndOfChain ??= SourceClone;
+                if (EndOfChain is null)
+                {
+                    EndOfChain = SourceClone;
+                    EndOfChainDelegate.Invoke = null;
+                    EndOfChainDelegate = new();
+                    EndOfChainDelegate.Invoke = EndOfChain.CreateDelegate(Builder.Orig);
+                }
             }
 
             private void UpdateEndOfChain()
             {
-                Helpers.Assert(SourceClone is not null);
+                //Helpers.Assert(SourceClone is not null);
 
                 if (noConfigIlhooks.Count == 0 && ilhookGraph.ListHead is null)
                 {
                     detourList.HasILHook = false;
                     EndOfChain = SourceClone;
+
+                    EndOfChainDelegate.Invoke = null;
+                    EndOfChainDelegate = new();
+                    EndOfChainDelegate.Invoke = EndOfChain?.CreateDelegate(Builder.Orig);
                     return;
                 }
-
                 if (SourceCloneIl is null)
                 {
                     throw new InvalidOperationException("Target method cannot be ILHooked");
@@ -595,6 +709,11 @@ namespace MonoMod.RuntimeDetour
                 // don't set EndOfChain until after the method successfully compiles, to ensure some semblance of consistenfy
                 Thread.MemoryBarrier();
                 EndOfChain = eoc;
+
+                EndOfChainDelegate.Invoke = null;
+                EndOfChainDelegate = new();
+                EndOfChainDelegate.Invoke = EndOfChain.CreateDelegate(Builder.Orig);
+                //PatchInfo.SetILHook(dmd.Generate().CreateDelegate(PatchInfo.BridgeType));
             }
 
             private static void InvokeManipulator(ILHookEntry entry, MethodDefinition def)
@@ -650,11 +769,14 @@ namespace MonoMod.RuntimeDetour
 
                 ManagedChainNode? chain = null;
                 ref var next = ref chain;
+                ManagedChainNode? prev = null;
                 while (graphNode is not null)
                 {
+                    //graphNode.ChainNode.Prev = prev;
                     next = graphNode.ChainNode;
                     next = ref next.Next;
                     next = null; // clear it to be safe before continuing
+                    prev = graphNode.ChainNode;
                     graphNode = graphNode.Next;
                 }
 
@@ -668,6 +790,7 @@ namespace MonoMod.RuntimeDetour
                 detourList.SyncInfo.WaitForNoActiveCalls(out stealTrampolines);
                 try
                 {
+                    var eoc = Builder.MakeEoc(EndOfChainDelegate);
                     chain = detourList;
                     while (chain is not null)
                     {
@@ -678,7 +801,7 @@ namespace MonoMod.RuntimeDetour
                         // and if that doesn't exist, then the updating factory
                         fac ??= updatingFactory;
 
-                        chain.UpdateDetour(fac, EndOfChain);
+                        chain.UpdateDetour(fac, eoc, Builder);
 
                         chain = chain.Next;
                     }
@@ -720,6 +843,7 @@ namespace MonoMod.RuntimeDetour
             public readonly MethodInfo PublicTarget;
             public readonly MethodInfo InvokeTarget;
             public readonly IDetourTrampoline NextTrampoline;
+            public readonly Delegate InvokeDelegate;
 
             public DetourInfo? DetourInfo;
 
@@ -728,6 +852,7 @@ namespace MonoMod.RuntimeDetour
                 PublicTarget = dt.PublicTarget;
                 InvokeTarget = dt.InvokeTarget;
                 NextTrampoline = dt.NextTrampoline;
+                InvokeDelegate = dt.InvokDelegate;
             }
         }
 

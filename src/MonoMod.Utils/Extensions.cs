@@ -62,6 +62,34 @@ namespace MonoMod.Utils
 
             return false;
         }
+        /// <summary>
+        /// Determine if two types are compatible with each other (f.e. object with string, or enums with their underlying integer type).
+        /// </summary>
+        /// <param name="type">The first type.</param>
+        /// <param name="other">The second type.</param>
+        /// <returns>True if both types are compatible with each other, false otherwise.</returns>
+        public static bool IsDelegateCompatible(this Type type, Type other)
+            => _IsDelegateCompatible(Helpers.ThrowIfNull(type), Helpers.ThrowIfNull(other));
+        private static bool _IsDelegateCompatible(this Type type, Type other)
+        {
+            if (type == other)
+                return true;
+
+            // before we check IsAssignableFrom, we need to make sure that it isn't one of the funky special types
+            // these types are actually boxed, non-value-types, despite being the bases of Enum and ValueType respectively
+            if (other.IsEnum && type == typeof(Enum))
+                return false;
+            if (other.IsValueType && type == typeof(ValueType))
+                return false;
+
+            if (type.IsAssignableFrom(other))
+                return true;
+
+            if (other.IsEnum && IsCompatible(type, Enum.GetUnderlyingType(other)))
+                return true;
+
+            return false;
+        }
 
         public static T GetDeclaredMember<T>(this T member) where T : MemberInfo
         {

@@ -7,10 +7,14 @@ using MonoMod.Utils;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using TypeAttributes = Mono.Cecil.TypeAttributes;
+using MethodAttributes = Mono.Cecil.MethodAttributes;
+
 
 namespace MonoMod.RuntimeDetour
 {
@@ -331,10 +335,19 @@ namespace MonoMod.RuntimeDetour
         )
         {
             using var dmd = Sig.CreateDmd(DebugFormatter.Format($"SyncProxy<{innerName}>"));
+            _GenerateSyncProxy(dmd.Definition, emitLoadSyncInfo, emitInvoke, emitLastCallReturn);
+            return dmd.Generate();
+        }
 
-            var il = dmd.GetILProcessor();
-            var method = dmd.Definition;
-            var module = dmd.Module!;
+        private static void _GenerateSyncProxy(
+            MethodDefinition method,
+            Action<MethodDefinition, ILProcessor> emitLoadSyncInfo,
+            Action<MethodDefinition, ILProcessor, Action> emitInvoke,
+            Action<MethodDefinition, ILProcessor, Action>? emitLastCallReturn = null
+        )
+        {
+            var il = method.Body.GetILProcessor();
+            var module = method.Module!;
 
             var syncInfoTypeRef = module.ImportReference(typeof(DetourSyncInfo));
             var syncInfoVar = new VariableDefinition(syncInfoTypeRef);
@@ -373,7 +386,7 @@ namespace MonoMod.RuntimeDetour
             il.Append(noWait);
 
             VariableDefinition? returnVar = null;
-            if (Sig.ReturnType != typeof(void))
+            if (method.ReturnType != module.TypeSystem.Void)
             {
                 returnVar = new(method.ReturnType);
                 il.Body.Variables.Add(returnVar);
@@ -425,8 +438,6 @@ namespace MonoMod.RuntimeDetour
                 il.Emit(OpCodes.Ldloc, returnVar);
             }
             il.Emit(OpCodes.Ret);
-
-            return dmd.Generate();
         }
         #endregion
 

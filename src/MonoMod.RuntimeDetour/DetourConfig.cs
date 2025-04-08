@@ -13,6 +13,10 @@ namespace MonoMod.RuntimeDetour
     public class DetourConfig
     {
         /// <summary>
+        /// if it is celeste legacy detour.
+        /// </summary>
+        public bool CelesteLegacyDetour = false;
+        /// <summary>
         /// Gets the ID of the detours represented by this config. Typically, this will be the name of the mod which creates this detour.
         /// </summary>
         public string Id { get; }

@@ -27,6 +27,11 @@ namespace MonoMod.Core
         ICoreNativeDetour CreateNativeDetour(CreateNativeDetourRequest request);
     }
 
+    [CLSCompliant(true)]
+    public interface IColdPatchDetourFactory:IDetourFactory
+    {
+    }
+
     /// <summary>
     /// A request to create an <see cref="ICoreDetour"/>.
     /// </summary>

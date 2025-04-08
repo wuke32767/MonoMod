@@ -52,7 +52,7 @@ namespace MonoMod.SourceGen.Internal.Utils
 
             methodName = $"{info.Type.FullContextName}.{info.MethodName}";
 
-            const string ReturnType = "(MethodInfo, Type)";
+            const string ReturnType = "(MethodInfo, Type, Type)";
             var selfTypeof = $"typeof({info.Type.InnermostType.FqName})";
 
             // first, we want to generate the getter method
@@ -67,6 +67,9 @@ namespace MonoMod.SourceGen.Internal.Utils
                     .Write("\", BindingFlags.NonPublic | BindingFlags.Static)!, ")
                     .Write("typeof(").Write(name).Write('<');
                 var numArgs = (i & 1) + (i >> 2);
+                _ = builder.Write(new string(',', numArgs));
+                _ = builder.Write(">), ");
+                _ = builder.Write("typeof(").Write(name).Write("Hook<");
                 _ = builder.Write(new string(',', numArgs));
                 _ = builder.WriteLine(">));");
             }
@@ -114,6 +117,21 @@ namespace MonoMod.SourceGen.Internal.Utils
                 if (firstIsByRef)
                     _ = builder.Write("ref ");
 
+                for (var j = 0; j < numRemaining + 1; j++)
+                {
+                    _ = builder.Write($"T{j} _{j}");
+                    if (j < numRemaining)
+                        _ = builder.Write(", ");
+                }
+                _ = builder.WriteLine(");");
+
+                _ = builder.Write("private delegate ").Write(hasResult ? "TResult" : "void").Write(' ').Write(name).Write("Hook");
+
+                _ = builder.Write(genericArgs).Write('(');
+                _ = builder.Write(name).Write(genericArgs).Write(" orig, ");
+                if (firstIsByRef)
+                    _ = builder.Write("ref ");
+                
                 for (var j = 0; j < numRemaining + 1; j++)
                 {
                     _ = builder.Write($"T{j} _{j}");

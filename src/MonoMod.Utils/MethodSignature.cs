@@ -77,6 +77,23 @@ namespace MonoMod.Utils
                 throw new NotSupportedException();
             }
         }
+        private sealed class DelegateCompatableComparer : IEqualityComparer<Type>
+        {
+            public static readonly DelegateCompatableComparer Instance = new();
+            public bool Equals(Type? x, Type? y)
+            {
+                if (ReferenceEquals(x, y))
+                    return true;
+                if (x is null || y is null)
+                    return false;
+                return x.IsDelegateCompatible(y);
+            }
+
+            public int GetHashCode([DisallowNull] Type obj)
+            {
+                throw new NotSupportedException();
+            }
+        }
 
         public bool IsCompatibleWith(MethodSignature other)
         {
@@ -85,6 +102,14 @@ namespace MonoMod.Utils
                 return true;
             return ReturnType.IsCompatible(other.ReturnType)
                 && parameters.SequenceEqual(other.Parameters, CompatableComparer.Instance);
+        }
+        public bool IsDelegateCompatibleWith(MethodSignature other)
+        {
+            Helpers.ThrowIfArgumentNull(other);
+            if (ReferenceEquals(this, other))
+                return true;
+            return ReturnType.IsCompatible(other.ReturnType)
+                && parameters.SequenceEqual(other.Parameters, DelegateCompatableComparer.Instance);
         }
 
         public DynamicMethodDefinition CreateDmd(string name)

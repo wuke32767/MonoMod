@@ -22,6 +22,8 @@ namespace MonoMod.RuntimeDetour
     {
         MethodInfo PublicTarget { get; }
         MethodInfo InvokeTarget { get; }
+
+        Delegate InvokDelegate { get; }
         IDetourTrampoline NextTrampoline { get; }
     }
 
