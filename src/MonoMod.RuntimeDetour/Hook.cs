@@ -805,11 +805,8 @@ namespace MonoMod.RuntimeDetour
                     ili.Emit(OpCodes.Tail);
                     ili.Emit(OpCodes.Calli, call);
                     ili.Emit(OpCodes.Ret);
-                    // TODO: wait for fix
-                    Switches.TryGetSwitchValue(Switches.DMDType, out var old);
-                    Switches.SetSwitchValue(Switches.DMDType, "cecil");
+
                     pointer.SetValue(wrap, inv.Generate());
-                    Switches.SetSwitchValue(Switches.DMDType, old);
                 }
 
                 using var dmd = hookSig.CreateDmd(DebugFormatter.Format($"Hook<{Target.GetID()}>"));
