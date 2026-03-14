@@ -30,6 +30,7 @@ namespace MonoMod.Core.Platforms
         /// <para>This must only be accessed if <see cref="Features"/> includes <see cref="ArchitectureFeature.CreateAltEntryPoint"/>.</para>
         /// </remarks>
         IAltEntryFactory AltEntryFactory { get; }
+        BytePatternCollection KnownGenericMethodThunks { get; }
 
         /// <summary>
         /// Computes a <see cref="NativeDetourInfo"/> which can be used to patch the instructions at <paramref name="from"/> to jump to <paramref name="target"/>.

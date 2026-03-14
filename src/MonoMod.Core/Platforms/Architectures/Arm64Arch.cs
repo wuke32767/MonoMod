@@ -17,6 +17,8 @@ namespace MonoMod.Core.Platforms.Architectures
 
         public IAltEntryFactory AltEntryFactory => null!;
 
+        public BytePatternCollection KnownGenericMethodThunks => throw new NotImplementedException();
+
         private readonly ISystem System;
 
         public Arm64Arch(ISystem system)

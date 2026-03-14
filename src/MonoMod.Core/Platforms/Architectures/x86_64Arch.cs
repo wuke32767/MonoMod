@@ -13,11 +13,65 @@ namespace MonoMod.Core.Platforms.Architectures
         public ArchitectureFeature Features => ArchitectureFeature.Immediate64 | ArchitectureFeature.CreateAltEntryPoint;
 
         private BytePatternCollection? lazyKnownMethodThunks;
+        private BytePatternCollection? lazyKnownGenericMethodThunks;
         public unsafe BytePatternCollection KnownMethodThunks => Helpers.GetOrInit(ref lazyKnownMethodThunks, createKnownMethodThunksFunc);
+        public unsafe BytePatternCollection KnownGenericMethodThunks => Helpers.GetOrInit(ref lazyKnownGenericMethodThunks, createKnownGenericMethodThunksFunc);
 
         public IAltEntryFactory AltEntryFactory { get; }
 
         private static readonly Func<BytePatternCollection> createKnownMethodThunksFunc = CreateKnownMethodThunks;
+        private static readonly Func<BytePatternCollection> createKnownGenericMethodThunksFunc = CreateKnownGenericMethodThunks;
+        private static BytePatternCollection CreateKnownGenericMethodThunks()
+        {
+            const ushort An = BytePattern.SAnyValue;
+            const ushort Ad = BytePattern.SAddressValue;
+            const byte Bn = BytePattern.BAnyValue;
+            const byte Bd = BytePattern.BAddressValue;
+
+            if (PlatformDetection.Runtime is RuntimeKind.Framework or RuntimeKind.CoreCLR)
+            {
+                return new BytePatternCollection(
+                    // Jump stubs and generic context stubs (generic context stubs should match later
+                    new(new(AddressKind.Abs64), mustMatchAtStart: false,
+                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
+                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
+                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
+                            // movabs rax, {PTR}
+                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                            // jmp rax
+                            0xff, 0xe0),
+
+                    // Jump stubs and generic context stubs (generic context stubs should match later
+                    new(new(AddressKind.Abs64), mustMatchAtStart: false,
+                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
+                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
+                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
+                            // movabs rax, {PTR}
+                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                            // call rax
+                            0xff, 0xd0),
+
+                    // Jump stubs and generic context stubs (generic context stubs should match later
+                    new(new(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
+                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
+                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
+                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
+                            // movabs rax, {PTR}
+                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                            // movabs rax, [rax]
+                            0x48, 0x8B, 0xC0,
+                            // jmp rax
+                            0xff, 0xe0),
+
+                    null
+                );
+            }
+            else
+            {
+                // TODO: Mono
+                return new();
+            }
+        }
         private static BytePatternCollection CreateKnownMethodThunks()
         {
             const ushort An = BytePattern.SAnyValue;
@@ -70,16 +124,6 @@ namespace MonoMod.Core.Platforms.Architectures
                         0xe9, Ad, Ad, Ad, Ad,
                         // pop rdi
                         0x5f),
-
-                    // Jump stubs and generic context stubs (generic context stubs should match later
-                    new(new(AddressKind.Abs64), mustMatchAtStart: false,
-                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
-                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
-                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
-                            // movabs rax, {PTR}
-                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
-                            // jmp rax
-                            0xff, 0xe0),
 
                     // .NET Core Tiered Compilation thunk
                     new(new(AddressKind.Rel32, 19), mustMatchAtStart: false,

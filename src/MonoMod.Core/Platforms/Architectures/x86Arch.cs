@@ -202,6 +202,8 @@ namespace MonoMod.Core.Platforms.Architectures
             0xB8, 0x00, 0x00, 0x00, 0x00, 0xB9, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE1
         ];
 
+        public BytePatternCollection KnownGenericMethodThunks => throw new NotImplementedException();
+
         public IAllocatedMemory CreateSpecialEntryStub(IntPtr target, IntPtr argument)
         {
             Span<byte> stub = stackalloc byte[SpecEntryStub.Length];

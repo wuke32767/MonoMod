@@ -273,6 +273,60 @@ namespace MonoMod.Core.Platforms
             }
         }
 
+        Type? canon = Type.GetType("System.__Canon");
+        /// <summary>
+        /// Gets an generic shared <see cref="Type"/> for a type, which has object identity.
+        /// </summary>
+        /// <param name="type">The type to identify.</param>
+        /// <returns>The identifiable <see cref="Type"/>.</returns>
+        public Type GetSharedGeneric(Type type)
+        {
+            Helpers.ThrowIfArgumentNull(type);
+
+            if (canon is { } && type.IsGenericType)
+            {
+                var dt = type.GetGenericTypeDefinition();
+                var old = type.GetGenericArguments();
+                return dt.MakeGenericType(old.Select(x => x.IsValueType ? GetSharedGeneric(x) : canon).ToArray());
+            }
+            return type;
+        }
+
+        /// <summary>
+        /// Gets shared generic <see cref="MethodBase"/> for a method, which has object identity.
+        /// </summary>
+        /// <param name="method">The method to identify.</param>
+        /// <returns>The identifiable <see cref="MethodBase"/>.</returns>
+        /// <seealso cref="IRuntime.GetIdentifiable(MethodBase)"/>
+        public MethodBase GetSharedGeneric(MethodBase method)
+        {
+            if (canon is { } && method is MethodInfo info && (info.IsGenericMethod || (info.DeclaringType?.IsGenericType ?? false)))
+            {
+                var o = info;
+                if (o.DeclaringType is { } dt && dt.IsGenericType)
+                {
+                    var curt = GetSharedGeneric(dt);
+                    info = (MethodInfo)MethodBase.GetMethodFromHandle(o.MethodHandle, curt.TypeHandle)!;
+                    if (info.IsGenericMethod && !info.IsGenericMethodDefinition)
+                    {
+                        info = info.GetGenericMethodDefinition();
+                    }
+                }
+                else
+                {
+                    info = o.GetGenericMethodDefinition();
+                }
+                if (o.IsGenericMethod)
+                {
+                    method = info.MakeGenericMethod(o.GetGenericArguments().Select(x => x.IsValueType ? GetSharedGeneric(x) : canon).ToArray());
+                }
+                else
+                {
+                    method = info;
+                }
+            }
+            return GetIdentifiable(method);
+        }
         /// <summary>
         /// Gets an "identifiable" <see cref="MethodBase"/> for a method, which has object identity.
         /// </summary>
@@ -486,11 +540,32 @@ namespace MonoMod.Core.Platforms
         /// </summary>
         /// <param name="method">The method to get the body of.</param>
         /// <returns>A pointer to the native method body of the method.</returns>
-        public IntPtr GetNativeMethodBody(MethodBase method)
+        public unsafe IntPtr GetNativeMethodBody(MethodBase method)
         {
+            Helpers.ThrowIfArgumentNull(method);
             if (SupportedFeatures.Has(RuntimeFeature.RequiresBodyThunkWalking))
             {
-                return GetNativeMethodBodyWalk(method, reloadPtr: true);
+                var ptr = GetNativeMethodBodyWalk(method, reloadPtr: true);
+                if (method.IsGenericMethod || (method.DeclaringType?.IsGenericType ?? false))
+                {
+                    var intend = (method.GetParameters().Length + 3) * 20;
+                    var entry = ptr;
+                    var readableLen = System.GetSizeOfReadableMemory(entry, intend);
+                    if (readableLen <= 0)
+                    {
+                        MMDbgLog.Warning($"Got zero or negative readable length {readableLen} at 0x{entry:x16}");
+                    }
+
+                    var span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, intend));
+
+                    if (Architecture.KnownGenericMethodThunks.TryFindMatch(span, out var addr, out var match, out var offset, out _))
+                    {
+                        var meaning = match.AddressMeaning;
+                        var precode = meaning.ProcessAddress(entry, offset, addr);
+                        ptr = GetNativeAddressBodyWalk(precode);
+                    }
+                }
+                return ptr;
             }
             else
             {
@@ -498,6 +573,73 @@ namespace MonoMod.Core.Platforms
             }
         }
 
+        private unsafe IntPtr GetNativeAddressBodyWalk(nint method)
+        {
+            var regenerated = false;
+            var didPrepareLastIter = false;
+            var iters = 0;
+
+            var archMatchCollection = Architecture.KnownMethodThunks;
+
+            MMDbgLog.Trace($"Performing method body walk for {method}");
+
+            nint prevEntry = -1;
+
+            var entry = (nint)(method);
+            MMDbgLog.Trace($"Starting entry point = 0x{entry:x16}");
+            do
+            {
+                if (iters++ > 20)
+                {
+                    MMDbgLog.Error($"Could not get entry point for {method}! (tried {iters} times) entry: 0x{entry:x16} prevEntry: 0x{prevEntry:x16}");
+                    throw new NotSupportedException(DebugFormatter.Format($"Could not get entrypoint for {method} (stuck in a loop)"));
+                }
+
+                if (!didPrepareLastIter && prevEntry == entry)
+                {
+                    // we're in a loop, break out
+                    break;
+                }
+                prevEntry = entry;
+
+                var readableLen = System.GetSizeOfReadableMemory(entry, archMatchCollection.MaxMinLength);
+                if (readableLen <= 0)
+                {
+                    MMDbgLog.Warning($"Got zero or negative readable length {readableLen} at 0x{entry:x16}");
+                }
+
+                // we still have to limit it like this because otherwise it'll scan and find *other* stubs
+                // if we want to, we could scan for an arch-specific padding pattern and use that to limit instead
+                var span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, archMatchCollection.MaxMinLength));
+
+                // TODO: be more limiting with which patterns can be scanned forward and which cannot
+                if (!archMatchCollection.TryFindMatch(span, out var addr, out var match, out var offset, out _))
+                    break;
+
+                var lastEntry = entry;
+
+                didPrepareLastIter = false;
+
+                var meaning = match.AddressMeaning;
+                MMDbgLog.Trace($"Matched thunk with {meaning} at 0x{entry:x16} (addr: 0x{addr:x8}, offset: {offset})");
+                if (meaning.Kind.IsPrecodeFixup() && !regenerated)
+                {
+                    var precode = meaning.ProcessAddress(entry, offset, addr);
+                    {
+                        entry = precode;
+                    }
+                }
+                else
+                {
+                    entry = meaning.ProcessAddress(entry, offset, addr);
+                }
+                MMDbgLog.Trace($"Got next entry point 0x{entry:x16}");
+
+                entry = NotThePreStub(lastEntry, entry, out _);
+            } while (true);
+
+            return entry;
+        }
         private unsafe IntPtr GetNativeMethodBodyWalk(MethodBase method, bool reloadPtr)
         {
             var regenerated = false;
