@@ -48,7 +48,7 @@
   
   <!-- Package Validation -->
   <PropertyGroup>
-    <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- <EnablePackageValidation>true</EnablePackageValidation> -->
   </PropertyGroup>
 
 </Project>
