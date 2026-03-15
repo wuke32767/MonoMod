@@ -23,7 +23,7 @@ namespace MonoMod.UnitTest.Core
         public void TestTieredCompilation()
         {
             Assert.NotEqual(0, TestFrom<object>());
-            DetourFactory.Default.CreateDetour(new(testFrom, rejected));
+            using var _ = DetourFactory.Default.CreateDetour(new(testFrom, rejected));
             for (var i = 0; i < 40; i++)
             {
                 Assert.Equal(0, TestFrom<object>());
@@ -315,7 +315,7 @@ namespace MonoMod.UnitTest.Core
                 () => new Qux<object>().InstanceMethod2("", ""));
             void Test(MethodInfo from, MethodInfo to, Action invoke)
             {
-                DetourFactory.Default.CreateDetour(new(from, to));
+                using var _ = DetourFactory.Default.CreateDetour(new(from, to));
                 for (var i = 0; i < 40; i++)
                 {
                     invoke();
