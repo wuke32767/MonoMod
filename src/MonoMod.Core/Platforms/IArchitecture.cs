@@ -30,7 +30,6 @@ namespace MonoMod.Core.Platforms
         /// <para>This must only be accessed if <see cref="Features"/> includes <see cref="ArchitectureFeature.CreateAltEntryPoint"/>.</para>
         /// </remarks>
         IAltEntryFactory AltEntryFactory { get; }
-        BytePatternCollection KnownGenericMethodThunks { get; }
 
         /// <summary>
         /// Computes a <see cref="NativeDetourInfo"/> which can be used to patch the instructions at <paramref name="from"/> to jump to <paramref name="target"/>.
@@ -127,6 +126,17 @@ namespace MonoMod.Core.Platforms
         /// <param name="argument">The extra argument for that target.</param>
         /// <returns>An <see cref="IAllocatedMemory"/> containing the generated stub.</returns>
         IAllocatedMemory CreateSpecialEntryStub(IntPtr target, IntPtr argument);
+    }
+
+    /// <summary>
+    /// Represents a host architecture that supports hooking generic methods.
+    /// </summary>
+    public interface IHookGenericsArchitecture : IArchitecture
+    {
+        /// <summary>
+        /// Gets a <see cref="BytePatternCollection"/> containing known method thunks for this architecture. These are used to locate the real method entry point.
+        /// </summary>
+        BytePatternCollection KnownGenericMethodThunks { get; }
     }
 
     /// <summary>

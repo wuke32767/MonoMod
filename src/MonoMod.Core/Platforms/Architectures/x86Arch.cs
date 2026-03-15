@@ -5,7 +5,7 @@ using System;
 
 namespace MonoMod.Core.Platforms.Architectures
 {
-    internal sealed class x86Arch : IArchitecture
+    internal sealed class x86Arch : IArchitecture, IHookGenericsArchitecture
     {
         public ArchitectureKind Target => ArchitectureKind.x86;
         public ArchitectureFeature Features => ArchitectureFeature.CreateAltEntryPoint;
@@ -202,7 +202,8 @@ namespace MonoMod.Core.Platforms.Architectures
             0xB8, 0x00, 0x00, 0x00, 0x00, 0xB9, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE1
         ];
 
-        public BytePatternCollection KnownGenericMethodThunks => throw new NotImplementedException();
+        public BytePatternCollection? lazyKnownGenericMethodThunks;
+        public BytePatternCollection KnownGenericMethodThunks => Helpers.GetOrInit(ref lazyKnownGenericMethodThunks, () => new());
 
         public IAllocatedMemory CreateSpecialEntryStub(IntPtr target, IntPtr argument)
         {

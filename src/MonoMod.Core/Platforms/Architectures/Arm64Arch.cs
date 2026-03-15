@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 
 namespace MonoMod.Core.Platforms.Architectures
 {
-    internal sealed class Arm64Arch : IArchitecture
+    internal sealed class Arm64Arch : IArchitecture, IHookGenericsArchitecture
     {
         public ArchitectureKind Target => ArchitectureKind.Arm64;
 
@@ -15,9 +15,10 @@ namespace MonoMod.Core.Platforms.Architectures
         private BytePatternCollection? lazyKnownMethodThunks;
         public BytePatternCollection KnownMethodThunks => Helpers.GetOrInit(ref lazyKnownMethodThunks, CreateKnownMethodThunks);
 
-        public IAltEntryFactory AltEntryFactory => null!;
+        public BytePatternCollection? lazyKnownGenericMethodThunks;
+        public BytePatternCollection KnownGenericMethodThunks => Helpers.GetOrInit(ref lazyKnownGenericMethodThunks, CreateKnownGenericMethodThunks);
 
-        public BytePatternCollection KnownGenericMethodThunks => throw new NotImplementedException();
+        public IAltEntryFactory AltEntryFactory => null!;
 
         private readonly ISystem System;
 
@@ -88,7 +89,7 @@ namespace MonoMod.Core.Platforms.Architectures
                 0x40, 0x01, 0x1f, 0xd6, // br x10
                 0x1f, 0x20, 0x03, 0xd5, // nop
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ];
 
             Span<byte> stub = stackalloc byte[stubData.Length];
@@ -209,7 +210,7 @@ namespace MonoMod.Core.Platforms.Architectures
                 // #define DATA_SLOT(stub, field) (stub##Code + STUB_PAGE_SIZE + stub##Data__##field)
                 //
                 // FixupPrecodeCode
-                ReadOnlySpan<byte> fixupPrecodeCode = 
+                ReadOnlySpan<byte> fixupPrecodeCode =
                 [
                     0x0b, 0x00, 0x02, 0x58, // ldr x11, DATA_SLOT(FixupPrecode, Target) // +0
                     0x60, 0x01, 0x1f, 0xd6, // br x11
@@ -219,7 +220,7 @@ namespace MonoMod.Core.Platforms.Architectures
                 ];
                 //
                 // FixupPrecodeCode (.NET 10 thunktemplates.S)
-                ReadOnlySpan<byte> fixupPrecodeCode2 = 
+                ReadOnlySpan<byte> fixupPrecodeCode2 =
                 [
                     0x0b, 0x00, 0x02, 0x58, // ldr x11, DATA_SLOT(FixupPrecode, Target) // +0
                     0x60, 0x01, 0x1f, 0xd6, // br x11
@@ -318,6 +319,113 @@ namespace MonoMod.Core.Platforms.Architectures
             }
         }
 
+        private static BytePatternCollection CreateKnownGenericMethodThunks()
+        {
+            const byte Bn = BytePattern.BAnyValue;
+            const byte Bd = BytePattern.BAddressValue;
+
+            if (PlatformDetection.Runtime is RuntimeKind.Framework or RuntimeKind.CoreCLR)
+            {
+                return new BytePatternCollection([
+                    // alignment(padding or not), br or blr, direct or indirect
+                    // for a simple jump instruction
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: true,
+                        new byte[]
+                        {
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xcf, 0xff,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                        },
+                        new byte[]
+                        {
+                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x10, 0x02, 0x40, 0xf9, // ldr x16, [x16]
+                            0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
+                            //          0x3f
+                              Bn,   Bn,   Bn,   Bn,
+                              Bd,   Bd,   Bd,   Bd,
+                              Bd,   Bd,   Bd,   Bd
+                        }
+                    ) { Address8Aligned = true, },
+
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: true,
+                        new byte[]
+                        {
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xcf, 0xff,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                        },
+                        new byte[]
+                        {
+                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x10, 0x02, 0x40, 0xf9, // ldr x16, [x16]
+                            0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
+                            //          0x3f
+                              Bd,   Bd,   Bd,   Bd,
+                              Bd,   Bd,   Bd,   Bd
+                        }
+                    ) { Address8Aligned = true, },
+
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: true,
+                        new byte[]
+                        {
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xcf, 0xff,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                        },
+                        new byte[]
+                        {
+                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
+                            //          0x3f
+                              Bn,   Bn,   Bn,   Bn,
+                              Bd,   Bd,   Bd,   Bd,
+                              Bd,   Bd,   Bd,   Bd
+                        }
+                    ) { Address8Aligned = true, },
+
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: true,
+                        new byte[]
+                        {
+                            0xff, 0xff, 0xff, 0xff,
+                            0xff, 0xff, 0xcf, 0xff,
+                            0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                        },
+                        new byte[]
+                        {
+                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
+                            //          0x3f
+                              Bd,   Bd,   Bd,   Bd,
+                              Bd,   Bd,   Bd,   Bd
+                        }
+                    ) { Address8Aligned = true, },
+                    // TODO: IL Stub
+                    // ldarg.this or nothing
+                    // ldc.i genericcontext
+                    // ldarg x
+                    // ldarg x
+                    // ldarg x
+                    // ldc.i address
+                    // calli somegeneratedsig
+                    // ret
+                ]);
+            }
+            else
+            {
+                // TODO: Mono
+                return new();
+            }
+        }
+
         private static void EncodeLdr64LiteralTo(Span<byte> dest, int offset, byte reg)
         {
             Helpers.DAssert(dest.Length >= 4);
@@ -353,7 +461,7 @@ namespace MonoMod.Core.Platforms.Architectures
                 Unsafe.WriteUnaligned(ref buffer[8], (ulong)to);
 
                 allocHandle = null;
-                
+
                 MMDbgLog.Trace($"Detouring arm64 from 0x{from:X16} to 0x{to:X16}");
 
                 return Size;

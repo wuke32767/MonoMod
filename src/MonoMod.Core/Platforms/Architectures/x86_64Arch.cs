@@ -6,7 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace MonoMod.Core.Platforms.Architectures
 {
-    internal sealed class x86_64Arch : IArchitecture
+    internal sealed class x86_64Arch : IArchitecture, IHookGenericsArchitecture
     {
         public ArchitectureKind Target => ArchitectureKind.x86_64;
 
@@ -23,15 +23,16 @@ namespace MonoMod.Core.Platforms.Architectures
         private static readonly Func<BytePatternCollection> createKnownGenericMethodThunksFunc = CreateKnownGenericMethodThunks;
         private static BytePatternCollection CreateKnownGenericMethodThunks()
         {
-            const ushort An = BytePattern.SAnyValue;
+            // const ushort An = BytePattern.SAnyValue;
             const ushort Ad = BytePattern.SAddressValue;
-            const byte Bn = BytePattern.BAnyValue;
-            const byte Bd = BytePattern.BAddressValue;
+            // const byte Bn = BytePattern.BAnyValue;
+            // const byte Bd = BytePattern.BAddressValue;
 
             if (PlatformDetection.Runtime is RuntimeKind.Framework or RuntimeKind.CoreCLR)
             {
                 return new BytePatternCollection(
                     // Jump stubs and generic context stubs (generic context stubs should match later
+                    // generic context stubs shuffle thunks
                     new(new(AddressKind.Abs64), mustMatchAtStart: false,
                             // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
                             // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
@@ -41,27 +42,25 @@ namespace MonoMod.Core.Platforms.Architectures
                             // jmp rax
                             0xff, 0xe0),
 
-                    // Jump stubs and generic context stubs (generic context stubs should match later
+                    // Instantiating ILStub
+                    // relying on jit optimization
                     new(new(AddressKind.Abs64), mustMatchAtStart: false,
-                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
-                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
-                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
                             // movabs rax, {PTR}
                             0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
                             // call rax
                             0xff, 0xd0),
 
-                    // Jump stubs and generic context stubs (generic context stubs should match later
-                    new(new(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
-                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
-                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
-                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
-                            // movabs rax, {PTR}
-                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
-                            // movabs rax, [rax]
-                            0x48, 0x8B, 0xC0,
-                            // jmp rax
-                            0xff, 0xe0),
+                    //// i swear i have seen this somewhere for once
+                    //new(new(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
+                    //        // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
+                    //        // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
+                    //        //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
+                    //        // movabs rax, {PTR}
+                    //        0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                    //        // movabs rax, [rax]
+                    //        0x48, 0x8B, 0xC0,
+                    //        // jmp rax
+                    //        0xff, 0xe0),
 
                     null
                 );

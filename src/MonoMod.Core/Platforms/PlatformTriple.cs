@@ -545,27 +545,7 @@ namespace MonoMod.Core.Platforms
             Helpers.ThrowIfArgumentNull(method);
             if (SupportedFeatures.Has(RuntimeFeature.RequiresBodyThunkWalking))
             {
-                var ptr = GetNativeMethodBodyWalk(method, reloadPtr: true);
-                if (method.IsGenericMethod || (method.DeclaringType?.IsGenericType ?? false))
-                {
-                    var intend = (method.GetParameters().Length + 3) * 20;
-                    var entry = ptr;
-                    var readableLen = System.GetSizeOfReadableMemory(entry, intend);
-                    if (readableLen <= 0)
-                    {
-                        MMDbgLog.Warning($"Got zero or negative readable length {readableLen} at 0x{entry:x16}");
-                    }
-
-                    var span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, intend));
-
-                    if (Architecture.KnownGenericMethodThunks.TryFindMatch(span, out var addr, out var match, out var offset, out _))
-                    {
-                        var meaning = match.AddressMeaning;
-                        var precode = meaning.ProcessAddress(entry, offset, addr);
-                        ptr = GetNativeAddressBodyWalk(precode);
-                    }
-                }
-                return ptr;
+                return GetNativeMethodBodyWalk(method, reloadPtr: true);
             }
             else
             {
@@ -573,87 +553,26 @@ namespace MonoMod.Core.Platforms
             }
         }
 
-        private unsafe IntPtr GetNativeAddressBodyWalk(nint method)
-        {
-            var regenerated = false;
-            var didPrepareLastIter = false;
-            var iters = 0;
-
-            var archMatchCollection = Architecture.KnownMethodThunks;
-
-            MMDbgLog.Trace($"Performing method body walk for {method}");
-
-            nint prevEntry = -1;
-
-            var entry = (nint)(method);
-            MMDbgLog.Trace($"Starting entry point = 0x{entry:x16}");
-            do
-            {
-                if (iters++ > 20)
-                {
-                    MMDbgLog.Error($"Could not get entry point for {method}! (tried {iters} times) entry: 0x{entry:x16} prevEntry: 0x{prevEntry:x16}");
-                    throw new NotSupportedException(DebugFormatter.Format($"Could not get entrypoint for {method} (stuck in a loop)"));
-                }
-
-                if (!didPrepareLastIter && prevEntry == entry)
-                {
-                    // we're in a loop, break out
-                    break;
-                }
-                prevEntry = entry;
-
-                var readableLen = System.GetSizeOfReadableMemory(entry, archMatchCollection.MaxMinLength);
-                if (readableLen <= 0)
-                {
-                    MMDbgLog.Warning($"Got zero or negative readable length {readableLen} at 0x{entry:x16}");
-                }
-
-                // we still have to limit it like this because otherwise it'll scan and find *other* stubs
-                // if we want to, we could scan for an arch-specific padding pattern and use that to limit instead
-                var span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, archMatchCollection.MaxMinLength));
-
-                // TODO: be more limiting with which patterns can be scanned forward and which cannot
-                if (!archMatchCollection.TryFindMatch(span, out var addr, out var match, out var offset, out _))
-                    break;
-
-                var lastEntry = entry;
-
-                didPrepareLastIter = false;
-
-                var meaning = match.AddressMeaning;
-                MMDbgLog.Trace($"Matched thunk with {meaning} at 0x{entry:x16} (addr: 0x{addr:x8}, offset: {offset})");
-                if (meaning.Kind.IsPrecodeFixup() && !regenerated)
-                {
-                    var precode = meaning.ProcessAddress(entry, offset, addr);
-                    {
-                        entry = precode;
-                    }
-                }
-                else
-                {
-                    entry = meaning.ProcessAddress(entry, offset, addr);
-                }
-                MMDbgLog.Trace($"Got next entry point 0x{entry:x16}");
-
-                entry = NotThePreStub(lastEntry, entry, out _);
-            } while (true);
-
-            return entry;
-        }
         private unsafe IntPtr GetNativeMethodBodyWalk(MethodBase method, bool reloadPtr)
         {
             var regenerated = false;
             var didPrepareLastIter = false;
             var iters = 0;
+            var shouldGenericWalk = method.IsGenericMethod || (method.DeclaringType?.IsGenericType ?? false);
 
             var archMatchCollection = Architecture.KnownMethodThunks;
 
             MMDbgLog.Trace($"Performing method body walk for {method}");
 
             nint prevEntry = -1;
+            var curMethod = method;
 
+            nint entry = 0;
             ReloadFuncPtr:
-            var entry = (nint)Runtime.GetMethodEntryPoint(method);
+            if (curMethod is not null)
+            {
+                entry = Runtime.GetMethodEntryPoint(curMethod);
+            }
             MMDbgLog.Trace($"Starting entry point = 0x{entry:x16}");
             do
             {
@@ -682,7 +601,24 @@ namespace MonoMod.Core.Platforms
 
                 // TODO: be more limiting with which patterns can be scanned forward and which cannot
                 if (!archMatchCollection.TryFindMatch(span, out var addr, out var match, out var offset, out _))
+                {
+                    if (shouldGenericWalk)
+                    {
+                        // TODO: figure out how many bytes were used for each parameter
+                        var intend = (method.GetParameters().Length + 3) * 20;
+                        span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, intend));
+
+                        if (Architecture is IHookGenericsArchitecture arch && arch.KnownGenericMethodThunks.TryFindMatch(span, out addr, out match, out offset, out _))
+                        {
+                            var meaning2 = match.AddressMeaning;
+                            entry = meaning2.ProcessAddress(entry, offset, addr);
+                            shouldGenericWalk = false;
+                            curMethod = null;
+                            goto ReloadFuncPtr;
+                        }
+                    }
                     break;
+                }
 
                 var lastEntry = entry;
 
@@ -693,10 +629,10 @@ namespace MonoMod.Core.Platforms
                 if (meaning.Kind.IsPrecodeFixup() && !regenerated)
                 {
                     var precode = meaning.ProcessAddress(entry, offset, addr);
-                    if (reloadPtr)
+                    if (reloadPtr && curMethod is { })
                     {
                         MMDbgLog.Trace($"Method thunk reset; regenerating (PrecodeFixupThunk: 0x{precode:X16})");
-                        Compile(method);
+                        Compile(curMethod);
                         didPrepareLastIter = true;
                         //regenerated = true;
                         goto ReloadFuncPtr;
@@ -713,15 +649,14 @@ namespace MonoMod.Core.Platforms
                 MMDbgLog.Trace($"Got next entry point 0x{entry:x16}");
 
                 entry = NotThePreStub(lastEntry, entry, out var wasPreStub);
-                if (wasPreStub && reloadPtr)
+                if (wasPreStub && reloadPtr && curMethod is { })
                 {
                     MMDbgLog.Trace("Matched ThePreStub");
-                    Compile(method);
+                    Compile(curMethod);
                     //regenerated = true;
                     goto ReloadFuncPtr;
                 }
             } while (true);
-
             return entry;
         }
 
