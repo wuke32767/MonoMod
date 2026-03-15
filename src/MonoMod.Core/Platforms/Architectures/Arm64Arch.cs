@@ -329,7 +329,7 @@ namespace MonoMod.Core.Platforms.Architectures
                 return new BytePatternCollection([
                     // alignment(padding or not), br or blr, direct or indirect
                     // for a simple jump instruction
-                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: true,
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
                         new byte[]
                         {
                             0xff, 0xff, 0xff, 0xff,
@@ -351,7 +351,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         }
                     ) { Address8Aligned = true, },
 
-                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: true,
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
                         new byte[]
                         {
                             0xff, 0xff, 0xff, 0xff,
@@ -362,7 +362,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         },
                         new byte[]
                         {
-                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x70, 0x00, 0x00, 0x58, // ldr x16, [pc, #12]
                             0x10, 0x02, 0x40, 0xf9, // ldr x16, [x16]
                             0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
                             //          0x3f
@@ -371,7 +371,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         }
                     ) { Address8Aligned = true, },
 
-                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: true,
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
                         {
                             0xff, 0xff, 0xff, 0xff,
@@ -391,7 +391,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         }
                     ) { Address8Aligned = true, },
 
-                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: true,
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
                         {
                             0xff, 0xff, 0xff, 0xff,
@@ -401,7 +401,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         },
                         new byte[]
                         {
-                            0x70, 0x00, 0x00, 0x58, // ldr x16, [pc, #12]
+                            0x50, 0x00, 0x00, 0x58, // ldr x16, [pc, #8]
                             0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
                             //          0x3f
                               Bd,   Bd,   Bd,   Bd,
