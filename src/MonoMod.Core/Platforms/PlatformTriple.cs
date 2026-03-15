@@ -624,7 +624,7 @@ namespace MonoMod.Core.Platforms
                             r.Append("generic thunk walk failed!");
                             foreach (var i in span)
                             {
-                                r.AppendFormat(CultureInfo.InvariantCulture, " 0x{0:x16}", i);
+                                r.AppendFormat(CultureInfo.InvariantCulture, " 0x{0:x}", i);
                             }
                             MMDbgLog.Warning(r.ToString());
                         }

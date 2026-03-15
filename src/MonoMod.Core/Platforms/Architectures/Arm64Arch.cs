@@ -382,7 +382,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         },
                         new byte[]
                         {
-                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x70, 0x00, 0x00, 0x58, // ldr x16, [pc, #12]
                             0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
                             //          0x3f
                               Bn,   Bn,   Bn,   Bn,
@@ -401,7 +401,7 @@ namespace MonoMod.Core.Platforms.Architectures
                         },
                         new byte[]
                         {
-                            0x90, 0x00, 0x00, 0x58, // ldr x16, [pc, #16]
+                            0x70, 0x00, 0x00, 0x58, // ldr x16, [pc, #12]
                             0x00, 0x02, 0x1f, 0xd6, // b(l)r x16 
                             //          0x3f
                               Bd,   Bd,   Bd,   Bd,
