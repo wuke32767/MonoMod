@@ -63,11 +63,6 @@ namespace MonoMod.Core.Utils
         /// </summary>
         public bool MustMatchAtStart { get; }
 
-        /// <summary>
-        /// Gets or sets whether addresses in this mode must be 8-byte aligned.
-        /// </summary>
-        public bool Address8Aligned { get; set; }
-
         private enum SegmentKind
         {
             Literal, MaskedLiteral, Any, AnyRepeating, Address,
@@ -433,9 +428,6 @@ namespace MonoMod.Core.Utils
                         {
                             // this is almost as simple as Any, we just *also* need to copy into the addrBuf
                             if (data.Length - pos < segment.Length)
-                                goto NoMatch;
-
-                            if (Address8Aligned && (pos & 0b111) != 0)
                                 goto NoMatch;
 
                             var pattern = data.Slice(pos, Math.Min(segment.Length, addrBuf.Length));

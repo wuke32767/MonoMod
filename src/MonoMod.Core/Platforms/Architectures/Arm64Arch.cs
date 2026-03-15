@@ -349,7 +349,7 @@ namespace MonoMod.Core.Platforms.Architectures
                               Bd,   Bd,   Bd,   Bd,
                               Bd,   Bd,   Bd,   Bd
                         }
-                    ) { Address8Aligned = true, },
+                    ),
 
                     new BytePattern(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
                         new byte[]
@@ -369,7 +369,7 @@ namespace MonoMod.Core.Platforms.Architectures
                               Bd,   Bd,   Bd,   Bd,
                               Bd,   Bd,   Bd,   Bd
                         }
-                    ) { Address8Aligned = true, },
+                    ),
 
                     new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
@@ -389,7 +389,7 @@ namespace MonoMod.Core.Platforms.Architectures
                               Bd,   Bd,   Bd,   Bd,
                               Bd,   Bd,   Bd,   Bd
                         }
-                    ) { Address8Aligned = true, },
+                    ),
 
                     new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
@@ -407,7 +407,7 @@ namespace MonoMod.Core.Platforms.Architectures
                               Bd,   Bd,   Bd,   Bd,
                               Bd,   Bd,   Bd,   Bd
                         }
-                    ) { Address8Aligned = true, },
+                    ),
                     // TODO: IL Stub
                     // ldarg.this or nothing
                     // ldc.i genericcontext
