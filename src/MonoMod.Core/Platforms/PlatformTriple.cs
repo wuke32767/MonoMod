@@ -7,9 +7,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 namespace MonoMod.Core.Platforms
 {
@@ -602,19 +604,29 @@ namespace MonoMod.Core.Platforms
                 // TODO: be more limiting with which patterns can be scanned forward and which cannot
                 if (!archMatchCollection.TryFindMatch(span, out var addr, out var match, out var offset, out _))
                 {
-                    if (shouldGenericWalk)
+                    if (shouldGenericWalk && Architecture is IHookGenericsArchitecture arch)
                     {
                         // TODO: figure out how many bytes were used for each parameter
                         var intend = (method.GetParameters().Length + 3) * 20;
                         span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, intend));
 
-                        if (Architecture is IHookGenericsArchitecture arch && arch.KnownGenericMethodThunks.TryFindMatch(span, out addr, out match, out offset, out _))
+                        if (arch.KnownGenericMethodThunks.TryFindMatch(span, out addr, out match, out offset, out _))
                         {
                             var meaning2 = match.AddressMeaning;
                             entry = meaning2.ProcessAddress(entry, offset, addr);
                             shouldGenericWalk = false;
                             curMethod = null;
                             goto ReloadFuncPtr;
+                        }
+                        else
+                        {
+                            var r = new StringBuilder();
+                            r.Append("generic thunk walk failed!");
+                            foreach (var i in span)
+                            {
+                                r.AppendFormat(CultureInfo.InvariantCulture, " 0x{0:x16}", i);
+                            }
+                            MMDbgLog.Warning(r.ToString());
                         }
                     }
                     break;
