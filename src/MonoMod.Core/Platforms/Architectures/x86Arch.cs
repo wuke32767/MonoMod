@@ -11,11 +11,49 @@ namespace MonoMod.Core.Platforms.Architectures
         public ArchitectureFeature Features => ArchitectureFeature.CreateAltEntryPoint;
 
         private BytePatternCollection? lazyKnownMethodThunks;
+        private BytePatternCollection? lazyKnownGenericMethodThunks;
         public unsafe BytePatternCollection KnownMethodThunks => Helpers.GetOrInit(ref lazyKnownMethodThunks, createKnownMethodThunksFunc);
+        public unsafe BytePatternCollection KnownGenericMethodThunks => Helpers.GetOrInit(ref lazyKnownGenericMethodThunks, createKnownGenericMethodThunks);
 
         public IAltEntryFactory AltEntryFactory { get; }
 
         private static readonly Func<BytePatternCollection> createKnownMethodThunksFunc = CreateKnownMethodThunks;
+        private static BytePatternCollection createKnownGenericMethodThunks()
+        {
+            const ushort An = BytePattern.SAnyValue;
+            const ushort Ad = BytePattern.SAddressValue;
+            //const byte Bn = BytePattern.BAnyValue;
+            //const byte Bd = BytePattern.BAddressValue;
+
+            if (PlatformDetection.Runtime is RuntimeKind.Framework or RuntimeKind.CoreCLR)
+            {
+                return new BytePatternCollection(
+                    // .NET 10 runtime dump
+                    new(new(AddressKind.Rel32, 10), mustMatchAtStart: true,
+                        // mov edx, ?
+                        // jmp ?
+                        0xba, An, An, An, An,
+                        0xe9, Ad, Ad, Ad, Ad),
+
+                    new(new(AddressKind.Rel32, 12), mustMatchAtStart: true,
+                        // pop eax
+                        // push ?
+                        // push eax
+                        // jmp ?
+                        0x58,
+                        0x68, An, An, An, An,
+                        0x50,
+                        0xe9, Ad, Ad, Ad, Ad),
+
+                    null
+                );
+            }
+            else
+            {
+                // TODO: Mono
+                return new();
+            }
+        }
         private static BytePatternCollection CreateKnownMethodThunks()
         {
             const ushort An = BytePattern.SAnyValue;
@@ -201,9 +239,6 @@ namespace MonoMod.Core.Platforms.Architectures
         private static ReadOnlySpan<byte> SpecEntryStub => [
             0xB8, 0x00, 0x00, 0x00, 0x00, 0xB9, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE1
         ];
-
-        public BytePatternCollection? lazyKnownGenericMethodThunks;
-        public BytePatternCollection KnownGenericMethodThunks => Helpers.GetOrInit(ref lazyKnownGenericMethodThunks, () => new());
 
         public IAllocatedMemory CreateSpecialEntryStub(IntPtr target, IntPtr argument)
         {

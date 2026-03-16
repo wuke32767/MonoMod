@@ -23,7 +23,7 @@ namespace MonoMod.Core.Platforms.Architectures
         private static readonly Func<BytePatternCollection> createKnownGenericMethodThunksFunc = CreateKnownGenericMethodThunks;
         private static BytePatternCollection CreateKnownGenericMethodThunks()
         {
-            // const ushort An = BytePattern.SAnyValue;
+            const ushort An = BytePattern.SAnyValue;
             const ushort Ad = BytePattern.SAddressValue;
             // const byte Bn = BytePattern.BAnyValue;
             // const byte Bd = BytePattern.BAddressValue;
@@ -61,6 +61,17 @@ namespace MonoMod.Core.Platforms.Architectures
                     //        0x48, 0x8B, 0xC0,
                     //        // jmp rax
                     //        0xff, 0xe0),
+
+                    // .net core 3.1 dump
+                    new(new(AddressKind.Abs64), mustMatchAtStart: false,
+                            // movabs rsi, {PTR}
+                            0x48, 0xbe, An, An, An, An, An, An, An, An,
+                            // movabs rax, {PTR}
+                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                            // pop rbp
+                            0x5d,
+                            // jmp rax
+                            0x48, 0xff, 0xe0),
 
                     null
                 );

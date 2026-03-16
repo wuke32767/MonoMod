@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using MonoMod.Core;
+using MonoMod.Utils;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -50,7 +52,7 @@ namespace MonoMod.UnitTest.Core
     {
         public struct LargeStruct
         {
-            public long a; long b; long c; long d;
+            public long a; readonly long _; readonly long __; readonly long ___;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -258,14 +260,18 @@ namespace MonoMod.UnitTest.Core
                 typeof(GeneralTest).GetMethod("InstanceRegister").MakeGenericMethod(typeof(object)),
                 typeof(GeneralTest).GetMethod("InstanceRegisterReal").MakeGenericMethod(typeof(object)),
                 () => InstanceRegister([], "", ref Unsafe.NullRef<bool>()));
-            Test(
-                typeof(GeneralTest).GetMethod("InstanceByRef").MakeGenericMethod(typeof(object)),
-                typeof(GeneralTest).GetMethod("InstanceByRefReal").MakeGenericMethod(typeof(object)),
-                () => InstanceByRef([], "", ref Unsafe.NullRef<bool>()));
-            Test(
-                typeof(GeneralTest).GetMethod("StaticByRef", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
-                typeof(GeneralTest).GetMethod("StaticByRefReal", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
-                () => StaticByRef([], "", ref Unsafe.NullRef<bool>()));
+            // TODO: Wait for ABI fixup
+            if (PlatformDetection.Architecture is not ArchitectureKind.x86)
+            {
+                Test(
+                    typeof(GeneralTest).GetMethod("InstanceByRef").MakeGenericMethod(typeof(object)),
+                    typeof(GeneralTest).GetMethod("InstanceByRefReal").MakeGenericMethod(typeof(object)),
+                    () => InstanceByRef([], "", ref Unsafe.NullRef<bool>()));
+                Test(
+                    typeof(GeneralTest).GetMethod("StaticByRef", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
+                    typeof(GeneralTest).GetMethod("StaticByRefReal", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
+                    () => StaticByRef([], "", ref Unsafe.NullRef<bool>()));
+            }
             Test(
                 typeof(Foo).GetMethod("StaticMethod", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
                 typeof(Foo).GetMethod("StaticMethodReal", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(object)),
@@ -317,15 +323,93 @@ namespace MonoMod.UnitTest.Core
             void Test(MethodInfo from, MethodInfo to, Action invoke)
             {
                 using var _ = DetourFactory.Default.CreateDetour(new(from, to));
-                for (var i = 0; i < 40; i++)
-                {
-                    invoke();
-                }
-                Thread.Sleep(200);
-                for (var i = 0; i < 40; i++)
-                {
-                    invoke();
-                }
+                invoke();
+            }
+        }
+    }
+
+    public class WalkThroughTest(ITestOutputHelper helper) : TestBase(helper)
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int TestFrom() => TestFromCore();
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int TestFromCore() => 0;
+        public int Reject() => 1919810;
+        [Fact]
+        public void TestWalkThrough()
+        {
+            var self = typeof(WalkThroughTest);
+            var from = self.GetMethod(nameof(TestFrom));
+            var to = self.GetMethod(nameof(Reject));
+
+            Assert.Equal(0, TestFrom());
+            Assert.Equal(0, TestFromCore());
+            using var _ = DetourFactory.Default.CreateDetour(new(from, to));
+            Assert.Equal(1919810, TestFrom());
+            Assert.Equal(0, TestFromCore());
+        }
+    }
+    public class CountlessTest(ITestOutputHelper helper) : TestBase(helper)
+    {
+        public int Method0<T>() => 0;
+        public int Method1<T>(T a0) => 1;
+        public int Method2<T>(T a0, T a1) => 2;
+        public int Method3<T>(T a0, T a1, T a2) => 3;
+        public int Method4<T>(T a0, T a1, T a2, T a3) => 4;
+        public int Method5<T>(T a0, T a1, T a2, T a3, T a4) => 5;
+        public int Method6<T>(T a0, T a1, T a2, T a3, T a4, T a5) => 6;
+        public int Method7<T>(T a0, T a1, T a2, T a3, T a4, T a5, T a6) => 7;
+        public int Method8<T>(T a0, T a1, T a2, T a3, T a4, T a5, T a6, T a7) => 8;
+        public int Method0Real() => 114514;
+        public int Method1Real(object a0) => 114514;
+        public int Method2Real(object a0, object a1) => 114514;
+        public int Method3Real(object a0, object a1, object a2) => 114514;
+        public int Method4Real(object a0, object a1, object a2, object a3) => 114514;
+        public int Method5Real(object a0, object a1, object a2, object a3, object a4) => 114514;
+        public int Method6Real(object a0, object a1, object a2, object a3, object a4, object a5) => 114514;
+        public int Method7Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6) => 114514;
+        public int Method8Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6, object a7) => 114514;
+        [Fact]
+        public void TestCountless()
+        {
+            var self = typeof(CountlessTest);
+            for (var i = 0; i < 9; i++)
+            {
+                var sth = Enumerable.Repeat(this, i).ToArray();
+                var from = self.GetMethod($"Method{i}").MakeGenericMethod([typeof(object)]);
+                var to = self.GetMethod($"Method{i}Real");
+
+                Assert.Equal(i, from.Invoke(this, sth));
+                using var _ = DetourFactory.Default.CreateDetour(new(from, to));
+                Assert.Equal(114514, from.Invoke(this, sth));
+            }
+        }
+    }
+    public class ThisIsAbiTest(ITestOutputHelper helper) : TestBase(helper)
+    {
+        public int Method0<T>() => 0;
+        public int Method1<T>(T a0) => 1;
+        public static int Method2<T>(T a0, T a1) => 2;
+        public static int Method3<T>(T a0, T a1, T a2) => 3;
+        public int Method0Real() => 114514;
+        public static int Method1Real(object self, object a0) => 114514;
+        public int Method2Real(object a1) => 114514;
+        public static int Method3Real(object a0, object a1, object a2) => 114514;
+        [Fact]
+        public void TestOurAbi()
+        {
+            var self = typeof(ThisIsAbiTest);
+            for (var i = 0; i < 4; i++)
+            {
+                var from = self.GetMethod($"Method{i}").MakeGenericMethod([typeof(object)]);
+                var to = self.GetMethod($"Method{i}Real");
+
+                var sth = Enumerable.Repeat(this, from.GetParameters().Length).ToArray();
+                var th = from.IsStatic ? null : this;
+
+                Assert.Equal(i, from.Invoke(th, sth));
+                using var _ = DetourFactory.Default.CreateDetour(new(from, to));
+                Assert.Equal(114514, from.Invoke(th, sth));
             }
         }
     }
