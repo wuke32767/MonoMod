@@ -798,9 +798,11 @@ namespace MonoMod.Core.Platforms
                 // Thus, no ABI fixups are needed, return `to` as is.
                 return to;
             }
+            // switch to a dynamic method. toInfo must be refreshed.
+            requiresReturnBufferFixup = hasThis && /*toInfo.IsStatic*/true && hasReturnBuffer && returnBufferIsArgument;
 
-            var returnBufferType = hasReturnBuffer ? returnType.MakeByRefType() : returnType;
-            var newReturnType = hasReturnBuffer && !Abi.ReturnsReturnBuffer ? typeof(void) : returnBufferType;
+            var returnBufferType = requiresReturnBufferFixup ? returnType.MakeByRefType() : returnType;
+            var newReturnType = requiresReturnBufferFixup && !Abi.ReturnsReturnBuffer ? typeof(void) : returnBufferType;
 
             var thisPos = -1;
             var returnBufferPos = -1;
@@ -817,7 +819,7 @@ namespace MonoMod.Core.Platforms
                         argumentTypes.Add(from.GetThisParamType());
                         break;
 
-                    case SpecialArgumentKind.ReturnBuffer when hasReturnBuffer:
+                    case SpecialArgumentKind.ReturnBuffer when requiresReturnBufferFixup:
                         returnBufferPos = argumentTypes.Count;
                         argumentTypes.Add(returnBufferType);
                         break;
@@ -865,7 +867,7 @@ namespace MonoMod.Core.Platforms
 
             Helpers.DAssert(thisPos >= 0 || !hasThis);
             // note: ARM64 (sysv) uses a dedicated register for the return buffer, so we don't record it as an argument
-            Helpers.DAssert(!Abi.ReturnsReturnBuffer || !hasReturnBuffer || returnBufferPos >= 0);
+            Helpers.DAssert(!Abi.ReturnsReturnBuffer || !requiresReturnBufferFixup || returnBufferPos >= 0);
             Helpers.DAssert(userArgumentsOffset >= 0);
 
             using var dmd = new DynamicMethodDefinition(
@@ -879,7 +881,7 @@ namespace MonoMod.Core.Platforms
             var il = dmd.GetILProcessor();
 
             // load return buffer
-            if (hasReturnBuffer && returnBufferPos >= 0)
+            if (requiresReturnBufferFixup && returnBufferPos >= 0)
                 il.Emit(OpCodes.Ldarg, returnBufferPos);
 
             // load thisptr
@@ -894,11 +896,11 @@ namespace MonoMod.Core.Platforms
             il.Emit(OpCodes.Call, il.Body.Method.Module.ImportReference(to));
 
             // store the returned object
-            if (hasReturnBuffer && returnBufferPos >= 0)
+            if (requiresReturnBufferFixup && returnBufferPos >= 0)
                 il.Emit(OpCodes.Stobj, il.Body.Method.Module.ImportReference(returnType));
 
             // if we need to return the pointer, do that
-            if (hasReturnBuffer && Abi.ReturnsReturnBuffer)
+            if (requiresReturnBufferFixup && Abi.ReturnsReturnBuffer)
                 il.Emit(OpCodes.Ldarg, returnBufferPos);
 
             // then we're done
