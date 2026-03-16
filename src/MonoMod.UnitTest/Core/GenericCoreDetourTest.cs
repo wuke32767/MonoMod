@@ -13,6 +13,7 @@ namespace MonoMod.UnitTest.Core
     {
         static Type self = typeof(TieredCompilationTest);
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public int TestFrom<T>() => typeof(T).GetHashCode() | 1; //never returns 0
         static MethodInfo testFrom = self.GetMethod(nameof(TestFrom)).MakeGenericMethod([typeof(string)]);
 
