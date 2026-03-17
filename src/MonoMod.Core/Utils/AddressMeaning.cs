@@ -48,8 +48,8 @@ namespace MonoMod.Core.Utils
         public AddressMeaning(AddressKind kind, int relativeOffset)
         {
             kind.Validate();
-            if (!kind.IsRelative())
-                throw new ArgumentOutOfRangeException(nameof(kind));
+            // if (!kind.IsRelative())
+            //     throw new ArgumentOutOfRangeException(nameof(kind));
             if (relativeOffset < 0)
                 throw new ArgumentOutOfRangeException(nameof(relativeOffset));
             Kind = kind;
