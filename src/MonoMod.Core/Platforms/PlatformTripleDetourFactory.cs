@@ -297,7 +297,7 @@ namespace MonoMod.Core.Platforms
 
                 realTarget = triple.GetRealDetourTarget(src, dst);
 
-                base.DetourBox = new ManagedDetourBox(triple, PlatformTriple.Current.GetSharedGeneric(Source), realTarget);
+                base.DetourBox = new ManagedDetourBox(triple, PlatformTriple.Current.GetSharedGenericIdentifiable(Source), realTarget);
 
                 if (triple.SupportedFeatures.Has(RuntimeFeature.CompileMethodHook))
                 {
@@ -379,7 +379,7 @@ namespace MonoMod.Core.Platforms
                     return;
                 }
                 // don't worry, shared method never compiles.
-                method = PlatformTriple.Current.GetSharedGeneric(method);
+                method = PlatformTriple.Current.GetSharedGenericIdentifiable(method);
 
                 if (relatedDetours.TryGetValue(method, out var related))
                 {

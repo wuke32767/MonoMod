@@ -273,6 +273,9 @@ namespace MonoMod.Core.Platforms
                     RuntimeHelpers.PrepareMethod(handle);
                 }
             }
+            // sometimes the body walk instruction match just fails, and according to the dump, that should not happen.
+            // i suspicious this is the issue.
+            global::System.Threading.Thread.MemoryBarrier();
         }
 
         Type? canon = Type.GetType("System.__Canon");
@@ -281,7 +284,7 @@ namespace MonoMod.Core.Platforms
         /// </summary>
         /// <param name="type">The type to identify.</param>
         /// <returns>The identifiable <see cref="Type"/>.</returns>
-        public Type GetSharedGeneric(Type type)
+        public Type GetSharedGenericIdentifiable(Type type)
         {
             Helpers.ThrowIfArgumentNull(type);
 
@@ -289,7 +292,7 @@ namespace MonoMod.Core.Platforms
             {
                 var dt = type.GetGenericTypeDefinition();
                 var old = type.GetGenericArguments();
-                return dt.MakeGenericType(old.Select(x => x.IsValueType ? GetSharedGeneric(x) : canon).ToArray());
+                return dt.MakeGenericType(old.Select(x => x.IsValueType ? GetSharedGenericIdentifiable(x) : canon).ToArray());
             }
             return type;
         }
@@ -300,14 +303,15 @@ namespace MonoMod.Core.Platforms
         /// <param name="method">The method to identify.</param>
         /// <returns>The identifiable <see cref="MethodBase"/>.</returns>
         /// <seealso cref="IRuntime.GetIdentifiable(MethodBase)"/>
-        public MethodBase GetSharedGeneric(MethodBase method)
+        public MethodBase GetSharedGenericIdentifiable(MethodBase method)
         {
+            method = GetIdentifiable(method);
             if (canon is { } && method is MethodInfo info && (info.IsGenericMethod || (info.DeclaringType?.IsGenericType ?? false)))
             {
                 var o = info;
                 if (o.DeclaringType is { } dt && dt.IsGenericType)
                 {
-                    var curt = GetSharedGeneric(dt);
+                    var curt = GetSharedGenericIdentifiable(dt);
                     info = (MethodInfo)MethodBase.GetMethodFromHandle(o.MethodHandle, curt.TypeHandle)!;
                     if (info.IsGenericMethod && !info.IsGenericMethodDefinition)
                     {
@@ -318,16 +322,12 @@ namespace MonoMod.Core.Platforms
                 {
                     info = o.GetGenericMethodDefinition();
                 }
-                if (o.IsGenericMethod)
-                {
-                    method = info.MakeGenericMethod(o.GetGenericArguments().Select(x => x.IsValueType ? GetSharedGeneric(x) : canon).ToArray());
-                }
-                else
-                {
-                    method = info;
-                }
+                method =
+                    !o.IsGenericMethod ?
+                        info :
+                        info.MakeGenericMethod(o.GetGenericArguments().Select(x => x.IsValueType ? GetSharedGenericIdentifiable(x) : canon).ToArray());
             }
-            return GetIdentifiable(method);
+            return method;
         }
         /// <summary>
         /// Gets an "identifiable" <see cref="MethodBase"/> for a method, which has object identity.
@@ -624,7 +624,7 @@ namespace MonoMod.Core.Platforms
                             r.Append("generic thunk walk failed!");
                             foreach (var i in span)
                             {
-                                r.AppendFormat(CultureInfo.InvariantCulture, " 0x{0:x}", i);
+                                r.AppendFormat(CultureInfo.InvariantCulture, " 0x{0:x2}", i);
                             }
                             MMDbgLog.Warning(r.ToString());
                         }

@@ -36,6 +36,12 @@ namespace MonoMod.Core.Utils
         /// in the pattern argument, corresponding to an empty mask byte.
         /// </summary>
         public const byte BAddressValue = 0x02;
+        // arm64 movzk instruction imm16
+        /// <summary>
+        /// A placeholder which represents the second byte of an arm64 movzk instruction. For use in <see cref="BytePattern(AddressMeaning, ReadOnlyMemory{byte}, ReadOnlyMemory{byte})"/>,
+        /// in the pattern argument, corresponding to an empty mask byte.
+        /// </summary>
+        public const byte BArm64Value = 0x03;
         /// <summary>
         /// A placeholder which represents an address byte. For use in <see cref="BytePattern(AddressMeaning, bool, ReadOnlyMemory{ushort})"/>.
         /// </summary>
@@ -65,7 +71,7 @@ namespace MonoMod.Core.Utils
 
         private enum SegmentKind
         {
-            Literal, MaskedLiteral, Any, AnyRepeating, Address,
+            Literal, MaskedLiteral, Any, AnyRepeating, Address, Arm64,
         }
 
         private record struct PatternSegment(int Start, int Length, SegmentKind Kind)
@@ -193,6 +199,7 @@ namespace MonoMod.Core.Utils
                         (BAnyValue) => SegmentKind.Any,
                         (BAnyRepeatingValue) => SegmentKind.AnyRepeating,
                         (BAddressValue) => SegmentKind.Address,
+                        (BArm64Value) => SegmentKind.Arm64,
                         var x => throw new ArgumentException($"Pattern contained unknown special value {x:x2}", nameof(pattern))
                     },
                     _ => SegmentKind.MaskedLiteral,
@@ -216,6 +223,7 @@ namespace MonoMod.Core.Utils
                         BAnyValue => SegmentKind.Any,
                         BAnyRepeatingValue => SegmentKind.AnyRepeating,
                         BAddressValue => SegmentKind.Address,
+                        BArm64Value => SegmentKind.Arm64,
                         var x => throw new ArgumentException($"Pattern contained unknown special value {x:x2}", nameof(pattern))
                     },
                     0xFF => SegmentKind.Literal, // its a normal, unmasked literal
@@ -248,6 +256,7 @@ namespace MonoMod.Core.Utils
                     SegmentKind.Any => 1,
                     SegmentKind.AnyRepeating => 0, // AnyRepeating matches zero or more
                     SegmentKind.Address => 1,
+                    SegmentKind.Arm64 => 1,
                     _ => 0,
                 };
 
@@ -265,6 +274,8 @@ namespace MonoMod.Core.Utils
 
                 if (thisSegmentKind is SegmentKind.Address)
                     addrLength++;
+                else if (thisSegmentKind is SegmentKind.Arm64)
+                    addrLength += 2;
 
                 lastKind = thisSegmentKind;
             }
@@ -437,6 +448,29 @@ namespace MonoMod.Core.Utils
                             pos += segment.Length;
                             break;
                         }
+                    case SegmentKind.Arm64:
+                        { 
+                            // other bytes are matched by masks
+                            Helpers.Assert(segment.Length == 1);
+                            if (data.Length - pos < 3 && pos <= 0)
+                            {
+                                goto NoMatch;
+                            }
+
+                            var pattern = data.Slice(pos - 1, 4);
+                            var value = pattern[0] + (((int)pattern[1]) << 8) + (((int)pattern[2]) << 16);
+
+                            var addr = (short)((value >> 5) & 0xffff);
+                            var off = ((value >> 21) & 0b11) * 2;
+                            if(!BitConverter.IsLittleEndian)
+                            {
+                                off = 6 - off;
+                            }
+
+                            Unsafe.WriteUnaligned<short>(ref addrBuf[off], addr);
+                            pos += segment.Length;
+                            break;
+                        }
                     case SegmentKind.AnyRepeating:
                         {
                             // this is far and away the most difficult segment to process; we need to scan forward for the next 
@@ -593,7 +627,7 @@ namespace MonoMod.Core.Utils
                 {
                     return (segment, litOffset);
                 }
-                else if (segment.Kind is SegmentKind.Any or SegmentKind.Address or SegmentKind.MaskedLiteral)
+                else if (segment.Kind is SegmentKind.Any or SegmentKind.Address or SegmentKind.Arm64 or SegmentKind.MaskedLiteral)
                 { // TODO: enable indexing MaskedLiterals
                     litOffset += segment.Length;
                 }

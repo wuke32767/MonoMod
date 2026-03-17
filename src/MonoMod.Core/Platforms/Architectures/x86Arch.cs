@@ -45,6 +45,17 @@ namespace MonoMod.Core.Platforms.Architectures
                         0x50,
                         0xe9, Ad, Ad, Ad, Ad),
 
+                    // .NET Core 2.1 runtime dump
+                    new(new(AddressKind.Abs32 | AddressKind.Indirect, 13), mustMatchAtStart: true,
+                        // pop eax
+                        // push ?
+                        // push eax
+                        // jmp [ ? ]
+                        0x58,
+                        0x68, An, An, An, An,
+                        0x50,
+                        0xff, 0x25, Ad, Ad, Ad, Ad),
+
                     null
                 );
             }
