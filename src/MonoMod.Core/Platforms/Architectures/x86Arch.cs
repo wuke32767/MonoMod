@@ -31,7 +31,7 @@ namespace MonoMod.Core.Platforms.Architectures
                     // .NET 10 runtime dump
                     new(new(AddressKind.Rel32, 10), mustMatchAtStart: true,
                         // mov edx, ?
-                        // jmp ?
+                        // jmp rel ?
                         0xba, An, An, An, An,
                         0xe9, Ad, Ad, Ad, Ad),
 
@@ -39,14 +39,14 @@ namespace MonoMod.Core.Platforms.Architectures
                         // pop eax
                         // push ?
                         // push eax
-                        // jmp ?
+                        // jmp rel ?
                         0x58,
                         0x68, An, An, An, An,
                         0x50,
                         0xe9, Ad, Ad, Ad, Ad),
 
                     // .NET Core 2.1 runtime dump
-                    new(new(AddressKind.Abs32 | AddressKind.Indirect, 13), mustMatchAtStart: true,
+                    new(new(AddressKind.Abs32 | AddressKind.Indirect), mustMatchAtStart: true,
                         // pop eax
                         // push ?
                         // push eax
@@ -54,6 +54,12 @@ namespace MonoMod.Core.Platforms.Architectures
                         0x58,
                         0x68, An, An, An, An,
                         0x50,
+                        0xff, 0x25, Ad, Ad, Ad, Ad),
+
+                    new(new(AddressKind.Abs32 | AddressKind.Indirect), mustMatchAtStart: true,
+                        // mov edx, ?
+                        // jmp [ ? ]
+                        0xba, An, An, An, An,
                         0xff, 0x25, Ad, Ad, Ad, Ad),
 
                     null

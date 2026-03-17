@@ -762,7 +762,7 @@ namespace MonoMod.Core.Platforms
             var returnType = fromInfo.ReturnType;
             var hasReturnBuffer = Abi.Classify(returnType, true) is TypeClassification.ByReference;
             var hasThis = !fromInfo.IsStatic;
-            var requiresReturnBufferFixup = hasThis && toInfo.IsStatic && hasReturnBuffer && returnBufferIsArgument;
+            var requiresReturnBufferFixup = hasThis == toInfo.IsStatic && hasReturnBuffer && returnBufferIsArgument;
 
             // Whenever we detour a call from a generic method, depending on the ABI, we may
             // receive a generic context as an argument, which a callee never needs, at least
@@ -799,7 +799,7 @@ namespace MonoMod.Core.Platforms
                 return to;
             }
             // switch to a dynamic method. toInfo must be refreshed.
-            requiresReturnBufferFixup = hasThis && /*toInfo.IsStatic*/true && hasReturnBuffer && returnBufferIsArgument;
+            requiresReturnBufferFixup = hasThis == /*toInfo.IsStatic*/true && hasReturnBuffer && returnBufferIsArgument;
 
             var returnBufferType = requiresReturnBufferFixup ? returnType.MakeByRefType() : returnType;
             var newReturnType = requiresReturnBufferFixup && !Abi.ReturnsReturnBuffer ? typeof(void) : returnBufferType;
