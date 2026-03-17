@@ -36,12 +36,15 @@ namespace MonoMod.Core.Utils
         /// in the pattern argument, corresponding to an empty mask byte.
         /// </summary>
         public const byte BAddressValue = 0x02;
-        // arm64 movzk instruction imm16
+        // match arm64 movzk imm16 instruction. a really special placeholder.
+        // your pattern must be normally matching movzk _reg, #_target with mask and literal,
+        // and only set the second byte (which is originally 0x00) to this value.
+        // it will match the whole movz, movk sequence with your pattern.
         /// <summary>
         /// A placeholder which represents the second byte of an arm64 movzk instruction. For use in <see cref="BytePattern(AddressMeaning, ReadOnlyMemory{byte}, ReadOnlyMemory{byte})"/>,
         /// in the pattern argument, corresponding to an empty mask byte.
         /// </summary>
-        public const byte BArm64Value = 0x03;
+        public const byte BArm64Mov64Value = 0x03;
         /// <summary>
         /// A placeholder which represents an address byte. For use in <see cref="BytePattern(AddressMeaning, bool, ReadOnlyMemory{ushort})"/>.
         /// </summary>
@@ -71,7 +74,7 @@ namespace MonoMod.Core.Utils
 
         private enum SegmentKind
         {
-            Literal, MaskedLiteral, Any, AnyRepeating, Address, Arm64,
+            Literal, MaskedLiteral, Any, AnyRepeating, Address, Arm64Mov64,
         }
 
         private record struct PatternSegment(int Start, int Length, SegmentKind Kind)
@@ -199,7 +202,7 @@ namespace MonoMod.Core.Utils
                         (BAnyValue) => SegmentKind.Any,
                         (BAnyRepeatingValue) => SegmentKind.AnyRepeating,
                         (BAddressValue) => SegmentKind.Address,
-                        (BArm64Value) => SegmentKind.Arm64,
+                        (BArm64Mov64Value) => SegmentKind.Arm64Mov64,
                         var x => throw new ArgumentException($"Pattern contained unknown special value {x:x2}", nameof(pattern))
                     },
                     _ => SegmentKind.MaskedLiteral,
@@ -223,7 +226,7 @@ namespace MonoMod.Core.Utils
                         BAnyValue => SegmentKind.Any,
                         BAnyRepeatingValue => SegmentKind.AnyRepeating,
                         BAddressValue => SegmentKind.Address,
-                        BArm64Value => SegmentKind.Arm64,
+                        BArm64Mov64Value => SegmentKind.Arm64Mov64,
                         var x => throw new ArgumentException($"Pattern contained unknown special value {x:x2}", nameof(pattern))
                     },
                     0xFF => SegmentKind.Literal, // its a normal, unmasked literal
@@ -256,7 +259,7 @@ namespace MonoMod.Core.Utils
                     SegmentKind.Any => 1,
                     SegmentKind.AnyRepeating => 0, // AnyRepeating matches zero or more
                     SegmentKind.Address => 1,
-                    SegmentKind.Arm64 => 1,
+                    SegmentKind.Arm64Mov64 => 1,
                     _ => 0,
                 };
 
@@ -274,7 +277,7 @@ namespace MonoMod.Core.Utils
 
                 if (thisSegmentKind is SegmentKind.Address)
                     addrLength++;
-                else if (thisSegmentKind is SegmentKind.Arm64)
+                else if (thisSegmentKind is SegmentKind.Arm64Mov64)
                     addrLength += 2;
 
                 lastKind = thisSegmentKind;
@@ -436,41 +439,80 @@ namespace MonoMod.Core.Utils
                             break;
                         }
                     case SegmentKind.Address:
+                    {
+                        // this is almost as simple as Any, we just *also* need to copy into the addrBuf
+                        if (data.Length - pos < segment.Length)
+                            goto NoMatch;
+
+                        var pattern = data.Slice(pos, Math.Min(segment.Length, addrBuf.Length));
+                        pattern.CopyTo(addrBuf);
+                        addrBuf = addrBuf.Slice(Math.Min(addrBuf.Length, pattern.Length));
+
+                        pos += segment.Length;
+                        break;
+                    }
+                    case SegmentKind.Arm64Mov64:
+                    {
+                        Helpers.Assert(segment.Length == 1);
+                        var start = pos - 1;
+                        var f = segment.Start - 1;
+                        const int l = 4;
+                        if (f < 0 || f + l >= patternSpan.Length)
                         {
-                            // this is almost as simple as Any, we just *also* need to copy into the addrBuf
-                            if (data.Length - pos < segment.Length)
-                                goto NoMatch;
-
-                            var pattern = data.Slice(pos, Math.Min(segment.Length, addrBuf.Length));
-                            pattern.CopyTo(addrBuf);
-                            addrBuf = addrBuf.Slice(Math.Min(addrBuf.Length, pattern.Length));
-
-                            pos += segment.Length;
-                            break;
+                            throw new InvalidOperationException();
                         }
-                    case SegmentKind.Arm64:
-                        { 
-                            // other bytes are matched by masks
-                            Helpers.Assert(segment.Length == 1);
-                            if (data.Length - pos < 3 && pos <= 0)
+
+                        var pattern = patternSpan.Slice(f, l);
+                        var mask = bitmask.Span.Slice(f, l);
+                        Span<byte> remake = stackalloc byte[4];
+                        pattern.CopyTo(remake);
+                        remake[1] = 0x00;
+                        var curreg = -1;
+                        while (true)
+                        {
+                            if (data.Length <= start + 4)
                             {
-                                goto NoMatch;
+                                break;
                             }
 
-                            var pattern = data.Slice(pos - 1, 4);
-                            var value = pattern[0] + (((int)pattern[1]) << 8) + (((int)pattern[2]) << 16);
-
+                            var instr = data.Slice(start, 4);
+                            if (!Helpers.MaskedSequenceEqual(remake, instr, mask))
+                            {
+                                break;
+                            }
+                            var value = instr[0] + (((int)instr[1]) << 8) + (((int)instr[2]) << 16) +
+                                        (((int)instr[3]) << 24);
                             var addr = (short)((value >> 5) & 0xffff);
                             var off = ((value >> 21) & 0b11) * 2;
-                            if(!BitConverter.IsLittleEndian)
+                            var z = (value >> 29) & 0b11;
+                            var reg = addr & 0b11111;
+                            if (curreg != -1 && reg != curreg)
+                            {
+                                break;
+                            }
+
+                            curreg = reg;
+                            if (!BitConverter.IsLittleEndian)
                             {
                                 off = 6 - off;
                             }
 
+                            if (z == 0)
+                            {
+                                addrBuf.Fill(0xff);
+                            }
+                            else if (z == 3)
+                            {
+                                addrBuf.Clear();
+                            }
+
                             Unsafe.WriteUnaligned<short>(ref addrBuf[off], addr);
                             pos += segment.Length;
-                            break;
                         }
+
+                        pos = start + 2;
+                        break;
+                    }
                     case SegmentKind.AnyRepeating:
                         {
                             // this is far and away the most difficult segment to process; we need to scan forward for the next 
@@ -627,7 +669,7 @@ namespace MonoMod.Core.Utils
                 {
                     return (segment, litOffset);
                 }
-                else if (segment.Kind is SegmentKind.Any or SegmentKind.Address or SegmentKind.Arm64 or SegmentKind.MaskedLiteral)
+                else if (segment.Kind is SegmentKind.Any or SegmentKind.Address or SegmentKind.Arm64Mov64 or SegmentKind.MaskedLiteral)
                 { // TODO: enable indexing MaskedLiterals
                     litOffset += segment.Length;
                 }

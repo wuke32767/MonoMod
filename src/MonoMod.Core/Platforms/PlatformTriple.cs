@@ -608,6 +608,10 @@ namespace MonoMod.Core.Platforms
                     {
                         // TODO: figure out how many bytes were used for each parameter
                         var intend = (method.GetParameters().Length + 3) * 20;
+                        if (intend > readableLen)
+                        {
+                            readableLen = System.GetSizeOfReadableMemory(entry, intend);
+                        }
                         span = new ReadOnlySpan<byte>((void*)entry, Math.Min((int)readableLen, intend));
 
                         if (arch.KnownGenericMethodThunks.TryFindMatch(span, out addr, out match, out offset, out _))

@@ -323,7 +323,7 @@ namespace MonoMod.Core.Platforms.Architectures
         {
             const byte Bn = BytePattern.BAnyValue;
             const byte Bd = BytePattern.BAddressValue;
-            const byte Ba = BytePattern.BArm64Value;
+            const byte Ba = BytePattern.BArm64Mov64Value;
 
             if (PlatformDetection.Runtime is RuntimeKind.Framework or RuntimeKind.CoreCLR)
             {
@@ -423,24 +423,16 @@ namespace MonoMod.Core.Platforms.Architectures
                     new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
                         {
-                            0x1e, 0x00, 0xe0, 0x1f,
-                            0x1e, 0x00, 0xe0, 0x1f,
-                            0x1e, 0x00, 0xe0, 0x1f,
-                            0x1f, 0x00, 0xe0, 0x1f,
-                            0x1f, 0x00, 0xe0, 0x1f,
-                            0x1f, 0x00, 0xe0, 0x1f,
+                            0x1e, 0x00, 0x80, 0xdf,
+                            0x1f, 0x00, 0x80, 0xdf,
                             0xff, 0xff, 0xcf, 0xff,
                         },
                         new byte[]
                         {
-                            0x01,   Bn, 0x80, 0xd2, // movz x1, #?
-                            // 0                    // it may also in x0?
-                            0x01,   Bn, 0xa0, 0xf2, // movk x1, #?, lsl #16 
-                            0x01,   Bn, 0xc0, 0xf2, // movk x1, #?, lsl #32 
+                            0x00, 0x00, 0x80, 0xd2, // movz x1, #?
+                            //01                f2  // it may also in x0? also be movk?
                                                     // x8? where is return buffer?
-                            0x08,   Ba, 0x80, 0xd2, // movz x8, #0xc798
-                            0x08,   Ba, 0xa0, 0xf2, // movk x8, #0xefce, lsl #16 
-                            0x08,   Ba, 0xc0, 0xf2, // movk x8, #0xffde, lsl #32 
+                            0x08,   Ba, 0x80, 0xd2, // multiple movzk x8, #?
                             0x00, 0x01, 0x1f, 0xd6, // blr x8
                             //          0x3f        // br x8, i guess
                         }
