@@ -485,7 +485,7 @@ namespace MonoMod.Core.Utils
                             var addr = (short)((value >> 5) & 0xffff);
                             var off = ((value >> 21) & 0b11) * 2;
                             var z = (value >> 29) & 0b11;
-                            var reg = addr & 0b11111;
+                            var reg = value & 0b11111;
                             if (curreg != -1 && reg != curreg)
                             {
                                 break;
@@ -501,16 +501,16 @@ namespace MonoMod.Core.Utils
                             {
                                 addrBuf.Fill(0xff);
                             }
-                            else if (z == 3)
+                            else if (z == 2)
                             {
                                 addrBuf.Clear();
                             }
 
                             Unsafe.WriteUnaligned<short>(ref addrBuf[off], addr);
-                            pos += segment.Length;
+                            start += 4;
                         }
 
-                        pos = start + 2;
+                        pos = start - 2;
                         break;
                     }
                     case SegmentKind.AnyRepeating:

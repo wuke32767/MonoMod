@@ -423,14 +423,29 @@ namespace MonoMod.Core.Platforms.Architectures
                     new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
                         new byte[]
                         {
-                            0x1e, 0x00, 0x80, 0xdf,
+                                              0xff,
                             0x1f, 0x00, 0x80, 0xdf,
                             0xff, 0xff, 0xcf, 0xff,
                         },
                         new byte[]
                         {
-                            0x00, 0x00, 0x80, 0xd2, // movz x1, #?
-                            //01                f2  // it may also in x0? also be movk?
+                                              0xd2, // movz x1, #?
+                                                    // x8? where is return buffer?
+                            0x08,   Ba, 0x80, 0xd2, // multiple movzk x8, #?
+                            0x00, 0x01, 0x1f, 0xd6, // blr x8
+                            //          0x3f        // br x8, i guess
+                        }
+                    ),
+                    new BytePattern(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false,
+                        new byte[]
+                        {
+                                              0xff,
+                            0x1f, 0x00, 0x80, 0xdf,
+                            0xff, 0xff, 0xcf, 0xff,
+                        },
+                        new byte[]
+                        {
+                                              0xf2, // movk x1, #?
                                                     // x8? where is return buffer?
                             0x08,   Ba, 0x80, 0xd2, // multiple movzk x8, #?
                             0x00, 0x01, 0x1f, 0xd6, // blr x8

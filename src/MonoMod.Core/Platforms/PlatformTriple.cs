@@ -273,9 +273,6 @@ namespace MonoMod.Core.Platforms
                     RuntimeHelpers.PrepareMethod(handle);
                 }
             }
-            // sometimes the body walk instruction match just fails, and according to the dump, that should not happen.
-            // i suspicious this is the issue.
-            global::System.Threading.Thread.MemoryBarrier();
         }
 
         Type? canon = Type.GetType("System.__Canon");
