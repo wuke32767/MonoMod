@@ -64,8 +64,8 @@ namespace MonoMod.Core.Platforms.Architectures
 
                     // .net core 3.1 dump
                     new(new(AddressKind.Abs64), mustMatchAtStart: false,
-                            // movabs rsi, {PTR}
-                            0x48, 0xbe, An, An, An, An, An, An, An, An,
+                            // movabs ?, {PTR}
+                            0x48, 0xf8_b8, An, An, An, An, An, An, An, An,
                             // movabs rax, {PTR}
                             0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
                             // pop rbp
