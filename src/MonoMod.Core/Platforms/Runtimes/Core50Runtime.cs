@@ -6,6 +6,10 @@ namespace MonoMod.Core.Platforms.Runtimes
 {
     internal class Core50Runtime : Core31Runtime
     {
+        public override nint? MatchInstantiatingMethodStubWorker(ReadOnlySpan<byte> oldEntry, nint entry)
+        {
+            return null;
+        }
         public Core50Runtime(ISystem system) : base(system) { }
 
         // src/coreclr/src/inc/corinfo.h line 211

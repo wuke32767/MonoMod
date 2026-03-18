@@ -50,17 +50,17 @@ namespace MonoMod.Core.Platforms.Architectures
                             // call rax
                             0xff, 0xd0),
 
-                    //// i swear i have seen this somewhere for once
-                    //new(new(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
-                    //        // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
-                    //        // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
-                    //        //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
-                    //        // movabs rax, {PTR}
-                    //        0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
-                    //        // movabs rax, [rax]
-                    //        0x48, 0x8B, 0xC0,
-                    //        // jmp rax
-                    //        0xff, 0xe0),
+                    // .net core 2.1 dump
+                    new(new(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false,
+                            // movabs r?, {ptr} ; <-- this is for the generic context pointer, for instance
+                            // the instruction encoding is REX.W(B) B8+r ..., where the B bit of REX is set if extended 64-bit regs are used
+                            //0xfe_48, 0xf8_b8, An, An, An, An, An, An, An, An,
+                            // movabs rax, {PTR}
+                            0x48, 0xb8, Ad, Ad, Ad, Ad, Ad, Ad, Ad, Ad,
+                            // movabs rax, [rax]
+                            0x48, 0x8B, 0x00,
+                            // jmp rax
+                            0xff, 0xe0),
 
                     // .net core 3.1 dump
                     new(new(AddressKind.Abs64), mustMatchAtStart: false,

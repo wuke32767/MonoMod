@@ -381,22 +381,22 @@ namespace MonoMod.UnitTest.Core
         public int Method1<T>(T a0) => 1;
         public int Method2<T>(T a0, T a1) => 2;
         public int Method3<T>(T a0, T a1, T a2) => 3;
+
         public int Method4<T>(T a0, T a1, T a2, T a3) => 4;
         public int Method5<T>(T a0, T a1, T a2, T a3, T a4) => 5;
         public int Method6<T>(T a0, T a1, T a2, T a3, T a4, T a5) => 6;
         public int Method7<T>(T a0, T a1, T a2, T a3, T a4, T a5, T a6) => 7;
         public int Method8<T>(T a0, T a1, T a2, T a3, T a4, T a5, T a6, T a7) => 8;
-        public int Method0Real() => 114514;
-        public int Method1Real(object a0) => 114514;
-        public int Method2Real(object a0, object a1) => 114514;
-        public int Method3Real(object a0, object a1, object a2) => 114514;
-        public int Method4Real(object a0, object a1, object a2, object a3) => 114514;
-        public int Method5Real(object a0, object a1, object a2, object a3, object a4) => 114514;
-        public int Method6Real(object a0, object a1, object a2, object a3, object a4, object a5) => 114514;
-        public int Method7Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6) => 114514;
+        public int Method0Real() => GetHashCode() + GetHashCode();
+        public int Method1Real(object a0) => GetHashCode() + a0.GetHashCode();
+        public int Method2Real(object a0, object a1) => GetHashCode() + a1.GetHashCode();
+        public int Method3Real(object a0, object a1, object a2) => GetHashCode() + a2.GetHashCode();
 
-        public int Method8Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6,
-            object a7) => 114514;
+        public int Method4Real(object a0, object a1, object a2, object a3) => GetHashCode() + a3.GetHashCode();
+        public int Method5Real(object a0, object a1, object a2, object a3, object a4) => GetHashCode() + a4.GetHashCode();
+        public int Method6Real(object a0, object a1, object a2, object a3, object a4, object a5) => GetHashCode() + a5.GetHashCode();
+        public int Method7Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6) => GetHashCode() + a6.GetHashCode();
+        public int Method8Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6, object a7) => GetHashCode() + a7.GetHashCode();
 
         [Fact]
         public void TestCountless()
@@ -410,7 +410,7 @@ namespace MonoMod.UnitTest.Core
 
                 Assert.Equal(i, from.Invoke(this, sth));
                 using var _ = DetourFactory.Default.CreateDetour(new(from, to));
-                Assert.Equal(114514, (int)from.Invoke(this, sth));
+                Assert.Equal(GetHashCode() * 2, (int)from.Invoke(this, sth));
             }
         }
     }
@@ -480,7 +480,7 @@ namespace MonoMod.UnitTest.Core
         public void TestAbiParams()
         {
             var self = typeof(ThisIsAbiTest);
-            var hash=OrderedHash(this, self);
+            var hash = OrderedHash(this, self);
             object[] arr1 = [self];
             object[] arr2 = [this, self];
             for (var i = 4; i < 8; i++)
@@ -488,7 +488,7 @@ namespace MonoMod.UnitTest.Core
                 var from = self.GetMethod($"Method{i}").MakeGenericMethod([typeof(object)]);
                 var to = self.GetMethod($"Method{i}Real");
 
-                var sth = from.IsStatic ?arr2:arr1;
+                var sth = from.IsStatic ? arr2 : arr1;
                 var th = from.IsStatic ? null : this;
 
                 using var _ = DetourFactory.Default.CreateDetour(new(from, to));
@@ -514,7 +514,7 @@ namespace MonoMod.UnitTest.Core
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static LargeStruct Method10<T>(object self, T a0) => Throw<LargeStruct>();
-        
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static LargeStruct Method11<T>(object self, T a0) => Throw<LargeStruct>();
 
@@ -527,7 +527,7 @@ namespace MonoMod.UnitTest.Core
         public void TestAbiParamsOnLargeObject()
         {
             var self = typeof(ThisIsAbiTest);
-            var hash=OrderedHashLarge(this, self);
+            var hash = OrderedHashLarge(this, self);
             object[] arr1 = [self];
             object[] arr2 = [this, self];
             for (var i = 8; i < 12; i++)
@@ -535,7 +535,7 @@ namespace MonoMod.UnitTest.Core
                 var from = self.GetMethod($"Method{i}").MakeGenericMethod([typeof(object)]);
                 var to = self.GetMethod($"Method{i}Real");
 
-                var sth = from.IsStatic ?arr2:arr1;
+                var sth = from.IsStatic ? arr2 : arr1;
                 var th = from.IsStatic ? null : this;
 
                 using var _ = DetourFactory.Default.CreateDetour(new(from, to));

@@ -1,7 +1,10 @@
 ﻿using Mono.Cecil.Cil;
+using MonoMod.Core.Platforms.Runtimes;
+using MonoMod.Core.Utils;
 using MonoMod.Utils;
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -9,8 +12,70 @@ using DynamicMethod = System.Reflection.Emit.DynamicMethod;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
-    internal abstract class FxCoreBaseRuntime : IRuntime
+    internal abstract class FxCoreBaseRuntime : IRuntime, IHookGenericsRuntime
     {
+        BytePattern? SharedTrampolinePattern;
+        BytePatternCollection? PreTrampolinePattern;
+
+        public virtual unsafe nint? MatchInstantiatingMethodStubWorker(ReadOnlySpan<byte> oldEntry, nint entry)
+        {
+            if (PlatformDetection.Architecture is ArchitectureKind.x86_64)
+            {
+                // runtime dump
+                SharedTrampolinePattern ??= new(new AddressMeaning(AddressKind.Abs32), [
+                    0x48, 0x89, 0x7c, 0x24, 0x38,                   // mov [rsp+38h],rdi
+                    0x48, 0x89, 0x74, 0x24, 0x40,                   // mov [rsp+40h],rsi
+                    0x48, 0x89, 0x5c, 0x24, 0x48,                   // mov [rsp+48h],rbx
+                    0x48, 0x89, 0x6c, 0x24, 0x50,                   // mov [rsp+50h],rbp
+                    0x4c, 0x89, 0x64, 0x24, 0x58,                   // mov [rsp+58h],r12
+                    0x4c, 0x89, 0x6c, 0x24, 0x60,                   // mov [rsp+60h],r13
+                    0x4c, 0x89, 0x74, 0x24, 0x68,                   // mov [rsp+68h],r14
+                    0x4c, 0x89, 0x7c, 0x24, 0x70,                   // mov [rsp+70h],r15
+                    0x48, 0x89, 0x8c, 0x24, 0x80, 0x00, 0x00, 0x00, // mov [rsp+80h],rcx
+                    0x48, 0x89, 0x94, 0x24, 0x88, 0x00, 0x00, 0x00, // mov [rsp+88h],rdx
+                    0x4c, 0x89, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, // mov [rsp+90h],r8
+                    0x4c, 0x89, 0x8c, 0x24, 0x98, 0x00, 0x00, 0x00, // mov [rsp+98h],r9
+                    // i think this is enough
+                ]);
+                var len = System.GetSizeOfReadableMemory(entry, 72);
+                var span = new ReadOnlySpan<byte>((void*)entry, (int)Math.Min(len, 72));
+                if (!SharedTrampolinePattern.TryMatchAt(span, out _, out _))
+                {
+                    return null;
+                }
+                const ushort An = BytePattern.SAnyValue;
+                const ushort Ad = BytePattern.SAddressValue;
+
+                PreTrampolinePattern ??= new(
+                    new(new AddressMeaning(AddressKind.Abs64), mustMatchAtStart: false, [
+                        //0x48, 0xba,   An,   An,   An,   An,   An,   An,   An,   An, // mov rdx,genericcontext
+                        0x48, 0xb8,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad, // mov rax,&target
+                        0x50,                                                       // push rax
+                        0x68,   An,   An,   An,   An,                               // push ?
+                        0x48, 0xb8,   An,   An,   An,   An,   An,   An,   An,   An, // mov rax,&trampoline
+                        0xff, 0xe0,                                                 // jmp rax
+                    ]),
+                    new(new AddressMeaning(AddressKind.Abs64 | AddressKind.Indirect), mustMatchAtStart: false, [
+                        //0x48, 0xba,   An,   An,   An,   An,   An,   An,   An,   An, // mov rdx,genericcontext
+                        0x48, 0xb8,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad,   Ad, // mov rax,&target
+                        0x48, 0x8B, 0x00,                                           // movabs rax, [rax]
+                        0x50,                                                       // push rax
+                        0x68,   An,   An,   An,   An,                               // push ?
+                        0x48, 0xb8,   An,   An,   An,   An,   An,   An,   An,   An, // mov rax,&trampoline
+                        0xff, 0xe0,                                                 // jmp rax
+                    ]));
+                if (PreTrampolinePattern.TryFindMatch(oldEntry, out var addr, out var pattern, out var offset, out _))
+                {
+                    fixed (byte* at = &oldEntry[0])
+                    {
+                        return pattern.AddressMeaning.ProcessAddress((nint)at, offset, addr);
+                    }
+                }
+                return null;
+            }
+            // TODO:
+            return null;
+        }
 
         public abstract RuntimeKind Target { get; }
 
@@ -81,8 +146,9 @@ namespace MonoMod.Core.Platforms.Runtimes
             }
         }
 
-        protected FxCoreBaseRuntime()
+        protected FxCoreBaseRuntime(ISystem system)
         {
+            System = system;
             if (PlatformDetection.Architecture == ArchitectureKind.x86)
             {
                 // On x86/RyuJIT, the runtime uses its own really funky ABI
@@ -266,6 +332,8 @@ namespace MonoMod.Core.Platforms.Runtimes
             || (_IRuntimeMethodInfo_get_Value is not null
             && _RuntimeHelpers__CompileMethod_TakesRuntimeMethodHandleInternal
                 ))));
+
+        protected ISystem System { get; }
 
         private static Action<RuntimeMethodHandle> CreateBclCompileMethodHelper()
         {

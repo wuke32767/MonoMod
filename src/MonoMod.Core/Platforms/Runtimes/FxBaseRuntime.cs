@@ -3,7 +3,7 @@ using System;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
-    internal abstract class FxBaseRuntime : FxCoreBaseRuntime
+    internal abstract class FxBaseRuntime(ISystem system) : FxCoreBaseRuntime(system)
     {
         public override RuntimeKind Target => RuntimeKind.Framework;
 

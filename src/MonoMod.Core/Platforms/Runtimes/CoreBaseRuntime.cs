@@ -62,11 +62,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         public override RuntimeKind Target => RuntimeKind.CoreCLR;
 
-        protected ISystem System { get; }
-
-        protected CoreBaseRuntime(ISystem system)
+        protected CoreBaseRuntime(ISystem system) : base(system)
         {
-            System = system;
             if (system.DefaultAbi is { } abi)
             {
                 if (PlatformDetection.Architecture == ArchitectureKind.x86_64)

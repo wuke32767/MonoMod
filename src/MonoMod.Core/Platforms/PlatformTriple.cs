@@ -614,7 +614,12 @@ namespace MonoMod.Core.Platforms
                         if (arch.KnownGenericMethodThunks.TryFindMatch(span, out addr, out match, out offset, out _))
                         {
                             var meaning2 = match.AddressMeaning;
-                            entry = meaning2.ProcessAddress(entry, offset, addr);
+                            var newEntry = meaning2.ProcessAddress(entry, offset, addr);
+                            if (Runtime is IHookGenericsRuntime runtime && runtime.MatchInstantiatingMethodStubWorker(span, newEntry) is { } realEntry)
+                            {
+                                newEntry = realEntry;
+                            }
+                            entry = newEntry;
                             shouldGenericWalk = false;
                             curMethod = null;
                             goto ReloadFuncPtr;

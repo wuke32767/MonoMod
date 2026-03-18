@@ -116,6 +116,19 @@ namespace MonoMod.Core.Platforms
     }
 
     /// <summary>
+    /// Represents a host .NET runtime that supports hooking generic methods.
+    /// </summary>
+    public interface IHookGenericsRuntime : IRuntime
+    {
+        /// <summary>
+        /// TODO: figure which version it is
+        /// match a mew method thunk, which involves a shared stub, just like the PreStub. 
+        /// </summary>
+        /// <returns></returns>
+        public nint? MatchInstantiatingMethodStubWorker(ReadOnlySpan<byte> oldEntry, nint entry);
+    }
+
+    /// <summary>
     /// A callback which is called when a method is compiled by the JIT.
     /// </summary>
     /// <remarks>

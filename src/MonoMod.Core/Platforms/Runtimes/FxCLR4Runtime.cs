@@ -10,7 +10,7 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         private ISystem system;
 
-        public FxCLR4Runtime(ISystem system)
+        public FxCLR4Runtime(ISystem system) : base(system)
         {
             this.system = system;
 

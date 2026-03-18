@@ -2,12 +2,8 @@
 {
     internal sealed class FxCLR2Runtime : FxBaseRuntime
     {
-
-        private readonly ISystem system;
-        public FxCLR2Runtime(ISystem system) : base()
+        public FxCLR2Runtime(ISystem system) : base(system)
         {
-            this.system = system;
-
             if (AbiCore is null)
             {
                 // TODO: where is the generic context passed on CLR 2?
