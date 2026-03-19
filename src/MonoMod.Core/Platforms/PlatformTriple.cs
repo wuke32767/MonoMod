@@ -273,6 +273,7 @@ namespace MonoMod.Core.Platforms
                     RuntimeHelpers.PrepareMethod(handle);
                 }
             }
+            global::System.Threading.Thread.MemoryBarrier();
         }
 
         Type? canon = Type.GetType("System.__Canon");
