@@ -56,27 +56,40 @@ namespace MonoMod.UnitTest
     // TODO: after generic detour is done, make a generic version
     public class CountlessTest(ITestOutputHelper helper) : TestBase(helper)
     {
-        // after generic detour is done, make them generic
-        public int Method0() => 0;
-        public int Method1(T a0) => 1;
-        public int Method2(T a0, T a1) => 2;
-        public int Method3(T a0, T a1, T a2) => 3;
-        public int Method4(T a0, T a1, T a2, T a3) => 4;
-        public int Method5(T a0, T a1, T a2, T a3, T a4) => 5;
-        public int Method6(T a0, T a1, T a2, T a3, T a4, T a5) => 6;
-        public int Method7(T a0, T a1, T a2, T a3, T a4, T a5, T a6) => 7;
-        public int Method8(T a0, T a1, T a2, T a3, T a4, T a5, T a6, T a7) => 8;
-        public int Method0Real() => 114514;
-        public int Method1Real(object a0) => 114514;
-        public int Method2Real(object a0, object a1) => 114514;
-        public int Method3Real(object a0, object a1, object a2) => 114514;
-        public int Method4Real(object a0, object a1, object a2, object a3) => 114514;
-        public int Method5Real(object a0, object a1, object a2, object a3, object a4) => 114514;
-        public int Method6Real(object a0, object a1, object a2, object a3, object a4, object a5) => 114514;
-        public int Method7Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6) => 114514;
+        static uint OrderedHash(object self, object a0)
+        {
+            var b = self.GetHashCode() * 5 + a0.GetHashCode();
+            return (uint)b;
+        }
 
-        public int Method8Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6,
-            object a7) => 114514;
+        public uint Method0() => 0;
+        public uint Method1(T a0) => 1;
+        public uint Method2(T a0, T a1) => 2;
+        public uint Method3(T a0, T a1, T a2) => 3;
+        public uint Method4(T a0, T a1, T a2, T a3) => 4;
+        public uint Method5(T a0, T a1, T a2, T a3, T a4) => 5;
+        public uint Method6(T a0, T a1, T a2, T a3, T a4, T a5) => 6;
+        public uint Method7(T a0, T a1, T a2, T a3, T a4, T a5, T a6) => 7;
+        public uint Method8(T a0, T a1, T a2, T a3, T a4, T a5, T a6, T a7) => 8;
+        // one of the stub is shared, add test for them
+        public uint Method0Shared() => 0;
+        public uint Method1Shared(T a0) => 1;
+        public uint Method2Shared(T a0, T a1) => 2;
+        public uint Method3Shared(T a0, T a1, T a2) => 3;
+        public uint Method4Shared(T a0, T a1, T a2, T a3) => 4;
+        public uint Method5Shared(T a0, T a1, T a2, T a3, T a4) => 5;
+        public uint Method6Shared(T a0, T a1, T a2, T a3, T a4, T a5) => 6;
+        public uint Method7Shared(T a0, T a1, T a2, T a3, T a4, T a5, T a6) => 7;
+        public uint Method8Shared(T a0, T a1, T a2, T a3, T a4, T a5, T a6, T a7) => 8;
+        public uint Method0Real() => OrderedHash(this, this);
+        public uint Method1Real(object a0) => OrderedHash(this, a0);
+        public uint Method2Real(object a0, object a1) => OrderedHash(this, a1);
+        public uint Method3Real(object a0, object a1, object a2) => OrderedHash(this, a2);
+        public uint Method4Real(object a0, object a1, object a2, object a3) => OrderedHash(this, a3);
+        public uint Method5Real(object a0, object a1, object a2, object a3, object a4) => OrderedHash(this, a4);
+        public uint Method6Real(object a0, object a1, object a2, object a3, object a4, object a5) => OrderedHash(this, a5);
+        public uint Method7Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6) => OrderedHash(this, a6);
+        public uint Method8Real(object a0, object a1, object a2, object a3, object a4, object a5, object a6, object a7) => OrderedHash(this, a7);
 
         [Fact]
         public void TestCountless()
@@ -84,19 +97,28 @@ namespace MonoMod.UnitTest
             var self = typeof(CountlessTest);
             for (var i = 0; i < 9; i++)
             {
-                var sth = Enumerable.Repeat(this, i).ToArray();
+                var sth = Enumerable.Repeat(self, i).ToArray();
                 var from = self.GetMethod($"Method{i}"); //.MakeGenericMethod([typeof(object)]);
+                var shared = self.GetMethod($"Method{i}Shared"); //.MakeGenericMethod([typeof(object)]);
                 var to = self.GetMethod($"Method{i}Real");
 
-                Assert.Equal(i, from.Invoke(this, sth));
+                Assert.Equal((uint)i, (uint)from.Invoke(this, sth));
+                Assert.Equal((uint)i, (uint)shared.Invoke(this, sth));
                 using var _ = DetourFactory.Default.CreateDetour(new(from, to));
-                Assert.Equal(114514, (int)from.Invoke(this, sth));
+                Assert.Equal((uint)i, (uint)shared.Invoke(this, sth));
+                Assert.Equal(OrderedHash(this, sth.LastOrDefault() ?? (object)this), (uint)from.Invoke(this, sth));
             }
         }
     }
 
     public class ThisIsAbiTest(ITestOutputHelper helper) : TestBase(helper)
     {
+        static int OrderedHash(object self, object a0)
+        {
+            var b = self.GetHashCode() * 5 + a0.GetHashCode();
+            return b;
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         public int Method0() => 0;
 
@@ -131,13 +153,6 @@ namespace MonoMod.UnitTest
                 Assert.Equal(114514, (int)from.Invoke(th, sth));
             }
         }
-
-        static int OrderedHash(object self, object a0)
-        {
-            var b = self.GetHashCode() * 5 + a0.GetHashCode();
-            return b;
-        }
-
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public int Method4(T a0) => Throw<int>();
