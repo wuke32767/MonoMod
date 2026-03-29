@@ -1,6 +1,8 @@
 ﻿using MonoMod.Utils;
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace MonoMod.Core.Utils
 {
@@ -642,11 +644,18 @@ namespace MonoMod.Core.Utils
             } while (true);
         }
 
-        private (ReadOnlyMemory<byte> Bytes, int Offset)? lazyFirstLiteralSegment;
+        private StrongBox<(ReadOnlyMemory<byte> Bytes, int Offset)>? lazyFirstLiteralSegment;
         /// <summary>
         /// Gets the first literal segment of this pattern.
         /// </summary>
-        public (ReadOnlyMemory<byte> Bytes, int Offset) FirstLiteralSegment => lazyFirstLiteralSegment ??= GetFirstLiteralSegment();
+        public (ReadOnlyMemory<byte> Bytes, int Offset) FirstLiteralSegment
+        {
+            get
+            {
+                lazyFirstLiteralSegment ??= new(GetFirstLiteralSegment());
+                return lazyFirstLiteralSegment.Value;
+            }
+        }
 
         private (ReadOnlyMemory<byte> Bytes, int Offset) GetFirstLiteralSegment()
         {
