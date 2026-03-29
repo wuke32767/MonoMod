@@ -481,14 +481,19 @@ namespace MonoMod.Core.Utils
             return false;
         }
 
-        private StrongBox<ReadOnlyMemory<byte>>? lazyPossibleFirstBytes;
+        private volatile bool lazyPossibleFirstBytesInitialized;
+        private ReadOnlyMemory<byte> lazyPossibleFirstBytes;
 
         private ReadOnlyMemory<byte> PossibleFirstBytes
         {
             get
             {
-                lazyPossibleFirstBytes ??= new(GetPossibleFirstBytes());
-                return lazyPossibleFirstBytes.Value;
+                if (!lazyPossibleFirstBytesInitialized)
+                {
+                    lazyPossibleFirstBytes = GetPossibleFirstBytes();
+                    lazyPossibleFirstBytesInitialized = true;
+                }
+                return lazyPossibleFirstBytes;
             }
         }
 

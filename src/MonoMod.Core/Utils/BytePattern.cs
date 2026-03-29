@@ -441,80 +441,80 @@ namespace MonoMod.Core.Utils
                             break;
                         }
                     case SegmentKind.Address:
-                    {
-                        // this is almost as simple as Any, we just *also* need to copy into the addrBuf
-                        if (data.Length - pos < segment.Length)
-                            goto NoMatch;
+                        {
+                            // this is almost as simple as Any, we just *also* need to copy into the addrBuf
+                            if (data.Length - pos < segment.Length)
+                                goto NoMatch;
 
-                        var pattern = data.Slice(pos, Math.Min(segment.Length, addrBuf.Length));
-                        pattern.CopyTo(addrBuf);
-                        addrBuf = addrBuf.Slice(Math.Min(addrBuf.Length, pattern.Length));
+                            var pattern = data.Slice(pos, Math.Min(segment.Length, addrBuf.Length));
+                            pattern.CopyTo(addrBuf);
+                            addrBuf = addrBuf.Slice(Math.Min(addrBuf.Length, pattern.Length));
 
-                        pos += segment.Length;
-                        break;
-                    }
+                            pos += segment.Length;
+                            break;
+                        }
                     case SegmentKind.Arm64Mov64:
-                    {
-                        Helpers.Assert(segment.Length == 1);
-                        var start = pos - 1;
-                        var f = segment.Start - 1;
-                        const int l = 4;
-                        if (f < 0 || f + l >= patternSpan.Length)
                         {
-                            throw new InvalidOperationException();
+                            Helpers.Assert(segment.Length == 1);
+                            var start = pos - 1;
+                            var f = segment.Start - 1;
+                            const int l = 4;
+                            if (f < 0 || f + l >= patternSpan.Length)
+                            {
+                                throw new InvalidOperationException();
+                            }
+
+                            var pattern = patternSpan.Slice(f, l);
+                            var mask = bitmask.Span.Slice(f, l);
+                            Span<byte> remake = stackalloc byte[4];
+                            pattern.CopyTo(remake);
+                            remake[1] = 0x00;
+                            var curreg = -1;
+                            while (true)
+                            {
+                                if (data.Length <= start + 4)
+                                {
+                                    break;
+                                }
+
+                                var instr = data.Slice(start, 4);
+                                if (!Helpers.MaskedSequenceEqual(remake, instr, mask))
+                                {
+                                    break;
+                                }
+                                var value = instr[0] + (((int)instr[1]) << 8) + (((int)instr[2]) << 16) +
+                                            (((int)instr[3]) << 24);
+                                var addr = (short)((value >> 5) & 0xffff);
+                                var off = ((value >> 21) & 0b11) * 2;
+                                var z = (value >> 29) & 0b11;
+                                var reg = value & 0b11111;
+                                if (curreg != -1 && reg != curreg)
+                                {
+                                    break;
+                                }
+
+                                curreg = reg;
+                                if (!BitConverter.IsLittleEndian)
+                                {
+                                    off = 6 - off;
+                                }
+
+                                if (z == 0)
+                                {
+                                    addrBuf.Fill(0xff);
+                                }
+                                else if (z == 2)
+                                {
+                                    addrBuf.Clear();
+                                }
+
+                                Unsafe.WriteUnaligned<short>(ref addrBuf[off], addr);
+                                start += 4;
+                            }
+
+                            pos = start - 2;
+                            break;
                         }
-
-                        var pattern = patternSpan.Slice(f, l);
-                        var mask = bitmask.Span.Slice(f, l);
-                        Span<byte> remake = stackalloc byte[4];
-                        pattern.CopyTo(remake);
-                        remake[1] = 0x00;
-                        var curreg = -1;
-                        while (true)
-                        {
-                            if (data.Length <= start + 4)
-                            {
-                                break;
-                            }
-
-                            var instr = data.Slice(start, 4);
-                            if (!Helpers.MaskedSequenceEqual(remake, instr, mask))
-                            {
-                                break;
-                            }
-                            var value = instr[0] + (((int)instr[1]) << 8) + (((int)instr[2]) << 16) +
-                                        (((int)instr[3]) << 24);
-                            var addr = (short)((value >> 5) & 0xffff);
-                            var off = ((value >> 21) & 0b11) * 2;
-                            var z = (value >> 29) & 0b11;
-                            var reg = value & 0b11111;
-                            if (curreg != -1 && reg != curreg)
-                            {
-                                break;
-                            }
-
-                            curreg = reg;
-                            if (!BitConverter.IsLittleEndian)
-                            {
-                                off = 6 - off;
-                            }
-
-                            if (z == 0)
-                            {
-                                addrBuf.Fill(0xff);
-                            }
-                            else if (z == 2)
-                            {
-                                addrBuf.Clear();
-                            }
-
-                            Unsafe.WriteUnaligned<short>(ref addrBuf[off], addr);
-                            start += 4;
-                        }
-
-                        pos = start - 2;
-                        break;
-                    }
                     case SegmentKind.AnyRepeating:
                         {
                             // this is far and away the most difficult segment to process; we need to scan forward for the next 
@@ -644,7 +644,8 @@ namespace MonoMod.Core.Utils
             } while (true);
         }
 
-        private StrongBox<(ReadOnlyMemory<byte> Bytes, int Offset)>? lazyFirstLiteralSegment;
+        private volatile bool lazyFirstLiteralSegmentInitialized;
+        private (ReadOnlyMemory<byte> Bytes, int Offset) lazyFirstLiteralSegment;
         /// <summary>
         /// Gets the first literal segment of this pattern.
         /// </summary>
@@ -652,8 +653,12 @@ namespace MonoMod.Core.Utils
         {
             get
             {
-                lazyFirstLiteralSegment ??= new(GetFirstLiteralSegment());
-                return lazyFirstLiteralSegment.Value;
+                if (!lazyFirstLiteralSegmentInitialized)
+                {
+                    lazyFirstLiteralSegment = GetFirstLiteralSegment();
+                    lazyFirstLiteralSegmentInitialized = true;
+                }
+                return lazyFirstLiteralSegment;
             }
         }
 
