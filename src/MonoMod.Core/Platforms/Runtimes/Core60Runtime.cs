@@ -214,7 +214,7 @@ namespace MonoMod.Core.Platforms.Runtimes
                         stackallocWrapper.Wrapped = (IntPtr**)corJitInfo;
                         stackallocWrapper[ICorJitInfoWrapper.HotCodeRW] = IntPtr.Zero;
                         stackallocWrapper[ICorJitInfoWrapper.ColdCodeRW] = IntPtr.Zero;
-                        corJitInfo = (nint)Unsafe.AsPointer(ref stackallocWrapper);
+                        corJitInfo = (nint)(&stackallocWrapper);
                     }
 
                     CorJitResult result;
