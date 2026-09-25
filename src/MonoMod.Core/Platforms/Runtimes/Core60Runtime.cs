@@ -240,10 +240,6 @@ namespace MonoMod.Core.Platforms.Runtimes
                     {
                         try
                         {
-                            // we need to make sure that we set up the wrapper to continue
-                            if (stackallocWrapper.Wrapped is null)
-                                return result;
-
                             var rwEntry = stackallocWrapper[ICorJitInfoWrapper.HotCodeRW];
 
                             Runtime.CompileMethodHookPostCommon(methodInfo, nativeEntry, nativeSizeOfCode, rwEntry);
